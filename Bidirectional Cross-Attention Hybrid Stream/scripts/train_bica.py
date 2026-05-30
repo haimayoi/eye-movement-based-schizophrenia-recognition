@@ -203,7 +203,12 @@ def main():
     )
     
     # Get subject folds
-    cv_path = os.path.join(data_config.get('data_dir', 'EMS'), "Train_Valid.xlsx")
+    cv_path = os.path.join(data_config.get('raw_dir', 'EMS'), "Train_Valid.xlsx")
+    if not os.path.exists(cv_path):
+        cv_path = os.path.join(data_config.get('data_dir', 'EMS'), "Train_Valid.xlsx")
+    if not os.path.exists(cv_path):
+        cv_path = "EMS/Train_Valid.xlsx"
+        
     subject_to_fold = get_subject_folds(cv_path)
     
     # Separate train/valid and test splits
