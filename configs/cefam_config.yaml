@@ -149,7 +149,7 @@ training:
   # Focal Loss + Entropy Sparsity Reg
   loss:
     type: focal_with_entropy_reg
-    focal_alpha: 0.25
+    focal_alpha: 0.5
     focal_gamma: 2.0
     entropy_lambda: 0.01        # Sparsity regularization weight
     entropy_eps: 1.0e-8
