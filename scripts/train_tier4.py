@@ -11,6 +11,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, reca
 
 from src.tier3_tabular.group_kfold import get_subject_folds
 from src.tier4_advanced.hybrid_model import GNNCEFAMHybridModel
+from src.tier4_advanced.stgnn_standalone import STGNNStandaloneModel
 from src.tier4_advanced.focal_loss import FocalLossWithEntropyReg
 
 def set_seed(seed=42):
@@ -83,29 +84,36 @@ def main():
     print(f"Loading spatiotemporal graphs from {graphs_file}...")
     all_graphs = torch.load(graphs_file, weights_only=False)
     
-    features_path = data_config.get('features_stimulus_path', 'data/processed/features_stimulus_level.csv')
-    print(f"Loading flat stimulus-level features from {features_path}...")
-    df_stim = pd.read_csv(features_path)
-    
     # Load categories mapping
     categories_path = data_config.get('categories_path', 'data/metadata/stimulus_categories.csv')
     df_cat = pd.read_csv(categories_path)
     category_map = dict(zip(df_cat['Image_Name'], df_cat['Category']))
-    
-    # Extract features column names
-    meta_cols = ['Subject_ID', 'Stimulus_ID', 'Label', 'Is_Test']
-    feature_cols = [col for col in df_stim.columns if col not in meta_cols]
-    
-    # Create lookup for flat features to align with graph loaders
-    # Key: (Subject_ID, Stimulus_ID) -> numpy array of features
+
+    # Check model name
+    is_standalone = config['model'].get('name') == "ST-GNN-Standalone"
+    prefix = "stgnn" if is_standalone else "cefam"
+
+    # Conditionally load flat features
     flat_features_dict = {}
-    for _, row in df_stim.iterrows():
-        sub_id = int(row['Subject_ID'])
-        stim_id = row['Stimulus_ID']
-        flat_features_dict[(sub_id, stim_id)] = row[feature_cols].values.astype(np.float32)
+    handcrafted_dim = 0
+    if not is_standalone:
+        features_path = data_config.get('features_stimulus_path', 'data/processed/features_stimulus_level.csv')
+        print(f"Loading flat stimulus-level features from {features_path}...")
+        df_stim = pd.read_csv(features_path)
         
-    handcrafted_dim = len(feature_cols)
-    print(f"Handcrafted features input dimension: {handcrafted_dim}")
+        # Extract features column names
+        meta_cols = ['Subject_ID', 'Stimulus_ID', 'Label', 'Is_Test']
+        feature_cols = [col for col in df_stim.columns if col not in meta_cols]
+        
+        # Create lookup for flat features to align with graph loaders
+        # Key: (Subject_ID, Stimulus_ID) -> numpy array of features
+        for _, row in df_stim.iterrows():
+            sub_id = int(row['Subject_ID'])
+            stim_id = row['Stimulus_ID']
+            flat_features_dict[(sub_id, stim_id)] = row[feature_cols].values.astype(np.float32)
+            
+        handcrafted_dim = len(feature_cols)
+        print(f"Handcrafted features input dimension: {handcrafted_dim}")
     
     # Get subject folds
     cv_path = os.path.join(data_config.get('raw_dir', 'EMS'), "Train_Valid.xlsx")
@@ -139,7 +147,10 @@ def main():
         val_loader = DataLoader(val_graphs, batch_size=batch_size, shuffle=False)
         
         # Model, Loss, Optimizer
-        model = GNNCEFAMHybridModel(handcrafted_dim=handcrafted_dim, config=config).to(device)
+        if is_standalone:
+            model = STGNNStandaloneModel(config=config).to(device)
+        else:
+            model = GNNCEFAMHybridModel(handcrafted_dim=handcrafted_dim, config=config).to(device)
         
         loss_cfg = training_config.get('loss', {})
         criterion = FocalLossWithEntropyReg(
@@ -172,7 +183,7 @@ def main():
         # Checkpoint directories
         checkpoint_dir = config['paths'].get('checkpoint_dir', 'results/checkpoints/')
         os.makedirs(checkpoint_dir, exist_ok=True)
-        checkpoint_path = os.path.join(checkpoint_dir, f"cefam_fold_{fold}_best.pt")
+        checkpoint_path = os.path.join(checkpoint_dir, f"{prefix}_fold_{fold}_best.pt")
         
         # Overfit test if requested
         if args.overfit_batches > 0:
@@ -191,14 +202,15 @@ def main():
             for batch in train_loader:
                 batch = batch.to(device)
                 
-                # Fetch aligned handcrafted features for the batch
-                hc_batch = []
-                for sub_id, stim_id in zip(batch.subject_id, batch.stimulus_id):
-                    # sub_id and stim_id are tensors or strings. Make sure types match
-                    s_id = int(sub_id.item()) if torch.is_tensor(sub_id) else int(sub_id)
-                    hc_batch.append(flat_features_dict[(s_id, stim_id)])
-                    
-                hc_tensor = torch.tensor(np.array(hc_batch), dtype=torch.float32).to(device)
+                if not is_standalone:
+                    # Fetch aligned handcrafted features for the batch
+                    hc_batch = []
+                    for sub_id, stim_id in zip(batch.subject_id, batch.stimulus_id):
+                        s_id = int(sub_id.item()) if torch.is_tensor(sub_id) else int(sub_id)
+                        hc_batch.append(flat_features_dict[(s_id, stim_id)])
+                    hc_tensor = torch.tensor(np.array(hc_batch), dtype=torch.float32).to(device)
+                else:
+                    hc_tensor = None
                 
                 optimizer.zero_grad()
                 logits, gnn_attn, _, _ = model(batch, hc_tensor)
@@ -236,12 +248,14 @@ def main():
                 for batch in val_loader:
                     batch = batch.to(device)
                     
-                    hc_batch = []
-                    for sub_id, stim_id in zip(batch.subject_id, batch.stimulus_id):
-                        s_id = int(sub_id.item()) if torch.is_tensor(sub_id) else int(sub_id)
-                        hc_batch.append(flat_features_dict[(s_id, stim_id)])
-                        
-                    hc_tensor = torch.tensor(np.array(hc_batch), dtype=torch.float32).to(device)
+                    if not is_standalone:
+                        hc_batch = []
+                        for sub_id, stim_id in zip(batch.subject_id, batch.stimulus_id):
+                            s_id = int(sub_id.item()) if torch.is_tensor(sub_id) else int(sub_id)
+                            hc_batch.append(flat_features_dict[(s_id, stim_id)])
+                        hc_tensor = torch.tensor(np.array(hc_batch), dtype=torch.float32).to(device)
+                    else:
+                        hc_tensor = None
                     
                     logits, gnn_attn, _, _ = model(batch, hc_tensor)
                     targets = batch.y
@@ -326,7 +340,7 @@ def main():
     if all_val_preds:
         df_all_val_preds = pd.concat(all_val_preds, ignore_index=True)
         os.makedirs("results", exist_ok=True)
-        val_preds_path = "results/cefam_subject_val_predictions.csv"
+        val_preds_path = f"results/{prefix}_subject_val_predictions.csv"
         df_all_val_preds.to_csv(val_preds_path, index=False)
         print(f"\nSaved overall validation predictions to {val_preds_path}")
         
@@ -347,7 +361,7 @@ def main():
             "std_fold_accuracy": float(np.std([r['accuracy'] for r in cv_results]))
         }
         
-        summary_path = "results/cefam_results_summary.json"
+        summary_path = f"results/{prefix}_results_summary.json"
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=4)
         print(f"Saved results summary to {summary_path}")
