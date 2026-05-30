@@ -81,7 +81,7 @@ def main():
         raise FileNotFoundError(f"Graphs file not found at {graphs_file}. Run graph_builder.py first.")
         
     print(f"Loading spatiotemporal graphs from {graphs_file}...")
-    all_graphs = torch.load(graphs_file)
+    all_graphs = torch.load(graphs_file, weights_only=False)
     
     features_path = data_config.get('features_stimulus_path', 'data/processed/features_stimulus_level.csv')
     print(f"Loading flat stimulus-level features from {features_path}...")
