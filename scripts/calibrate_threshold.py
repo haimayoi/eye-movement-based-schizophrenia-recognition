@@ -1,10 +1,20 @@
+import os
+import argparse
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score, confusion_matrix, roc_auc_score
 
 def calibrate():
-    # Load validation predictions
-    df = pd.read_csv('results/cefam_subject_val_predictions.csv')
+    parser = argparse.ArgumentParser(description="Calibrate decision threshold for predictions")
+    parser.add_argument("--preds", type=str, default="results/cefam_subject_val_predictions.csv", help="Path to predictions CSV")
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.preds):
+        print(f"Error: Predictions file not found at {args.preds}")
+        return
+        
+    print(f"Loading predictions from {args.preds}...")
+    df = pd.read_csv(args.preds)
     y_true = df['Label'].values
     y_prob = df['Pred_Proba_Subject'].values
     
@@ -47,3 +57,4 @@ def calibrate():
 
 if __name__ == "__main__":
     calibrate()
+
