@@ -1,0 +1,107 @@
+# ============================================================
+# Spatiotemporal GNN Standalone Config (GNN Stream Only)
+# For ablation: GNN without CEFAM fusion
+# ============================================================
+
+# ----- Model -----
+model:
+  name: "ST-GNN-Standalone"
+  
+  gnn:
+    type: GAT
+    num_layers: 2
+    hidden_dim: 64
+    heads: [4, 4]
+    concat: true
+    dropout: 0.3
+    batch_norm: true
+    residual: true
+    edge_dim: 2
+
+  rinet_projector:
+    input_dim: 1056
+    hidden_dim: 256
+    output_dim: 64
+    dropout: 0.3
+
+  readout:
+    type: global_attention
+    gate_hidden_dim: 64
+
+  classifier:
+    hidden_dims: [256, 128]
+    dropout: [0.3, 0.2]
+    activation: relu
+    num_classes: 2
+
+# ----- Data -----
+data:
+  parquet_path: "data/processed/clean_fixations.parquet"
+  graphs_dir: "data/processed/graphs/"
+  rinet_path: "data/external/feature_dict_RINet.npy"
+
+  screen:
+    width: 1024
+    height: 768
+
+  graph:
+    k_neighbors: 3
+    include_spatial_edges: true
+    include_sequential_edges: true
+
+  padding:
+    max_seq_len: 24
+    ablation_values: [14, 20, 24, 32]
+
+  node_features:
+    low_level: [x_norm, y_norm, duration_norm, pupil_size, pupil_diff]
+    rinet_projected_dim: 64
+    total_dim: 69
+
+  edge_features: [saccade_amplitude, saccade_angle]
+
+  augmentation:
+    enabled: true
+    gaussian_noise_std: 0.005
+    fixation_drop_rate: 0.05
+    mixup:
+      enabled: true
+      alpha: 0.2
+
+# ----- Training -----
+training:
+  optimizer: AdamW
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  scheduler: CosineAnnealingWarmRestarts
+  T_0: 20
+  T_mult: 2
+  eta_min: 1.0e-6
+  warmup_epochs: 5
+
+  loss:
+    type: cross_entropy
+    label_smoothing: 0.1
+
+  epochs: 200
+  batch_size: 32
+  patience: 20
+  gradient_clip_val: 1.0
+  mixed_precision: true
+
+# ----- Evaluation -----
+evaluation:
+  cv_folds: 4
+  cv_type: group_kfold
+  group_column: Subject_ID
+  seeds: [42, 123, 456, 789]
+  metrics: [accuracy, auc, f1, precision, recall, specificity]
+
+# ----- Paths -----
+paths:
+  checkpoint_dir: "Spatiotemporal GNN/results/checkpoints/"
+  log_dir: "Spatiotemporal GNN/results/logs/"
+  figure_dir: "Spatiotemporal GNN/results/figures/"
+
+seed: 42
+deterministic: true

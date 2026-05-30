@@ -1,0 +1,209 @@
+# ============================================================
+# CEFAM Hybrid Model Config (Tier 4)
+# GNN Stream + Handcrafted Stream + Bidirectional Cross-Attention
+# Focal Loss + Entropy Sparsity Regularization
+# ============================================================
+
+# ----- Model -----
+model:
+  name: "GNN-CEFAM-Hybrid"
+  
+  # GNN Stream
+  gnn_stream:
+    node_dim: 69                # 5 (low-level) + 64 (RINet projected)
+    edge_dim: 2                 # amplitude, angle
+    gat:
+      num_layers: 2
+      hidden_dim: 64
+      heads: [4, 4]
+      concat: true
+      dropout: 0.3
+      batch_norm: true
+      residual: true            # Skip connection from layer 2
+    readout:
+      type: global_attention    # GlobalAttention pooling
+      gate_hidden_dim: 64
+    output_dim: 128             # z_graph dimension
+
+  # RINet Projection
+  rinet_projector:
+    input_dim: 1056
+    hidden_dim: 256
+    output_dim: 64
+    dropout: 0.3
+
+  # Handcrafted Stream
+  handcrafted_stream:
+    input_dim: null              # Auto-set from feature count
+    hidden_dims: [256, 128]
+    dropout: [0.2, 0.1]
+    activation: gelu
+    batch_norm: true
+    output_dim: 128             # z_expert dimension
+
+  # CEFAM Fusion
+  cefam:
+    d_model: 128
+    nhead: 4
+    dropout: 0.1
+    num_layers: 1
+
+  # Classification Head
+  classifier:
+    input_dim: 256              # concat(z_fused_1, z_fused_2)
+    hidden_dims: [128]
+    dropout: [0.3]
+    activation: gelu
+    num_classes: 2
+
+# ----- Data -----
+data:
+  dataset: EMS
+  raw_dir: "EMS"
+  processed_dir: "data/processed/"
+  parquet_path: "data/processed/clean_fixations.parquet"
+  features_stimulus_path: "data/processed/features_stimulus_level.csv"
+  features_subject_path: "data/processed/features_subject_level.csv"
+  graphs_dir: "data/processed/graphs/"
+  rinet_path: "data/external/feature_dict_RINet.npy"
+  stimuli_dir: "data/stimuli/"
+  categories_path: "data/metadata/stimulus_categories.csv"
+
+  # Screen resolution (for spatial filter)
+  screen:
+    width: 1024
+    height: 768
+
+  # Preprocessing (Tier 1)
+  preprocessing:
+    min_fixation_duration_ms: 50
+    spatial_boundary: true
+
+  # Graph construction
+  graph:
+    k_neighbors: 3
+    include_spatial_edges: true
+    include_sequential_edges: true
+    directed_sequential: true
+    undirected_spatial: true
+
+  # Padding masking
+  padding:
+    max_seq_len: 24             # Default; ablation: {14, 20, 24, 32}
+    pad_value: 0.0
+
+  # Node features
+  node_features:
+    low_level:
+      - x_norm                  # FIX_X / 1024
+      - y_norm                  # FIX_Y / 768
+      - duration_norm           # FIX_DURATION normalized
+      - pupil_size              # FIX_PUPIL normalized
+      - pupil_diff              # Δ pupil between consecutive fixations
+    rinet_dim: 1056
+    rinet_projected_dim: 64
+
+  # Edge features
+  edge_features:
+    - saccade_amplitude
+    - saccade_angle
+
+  # Image categories
+  stimulus_categories:
+    - Social
+    - Natural
+    - Synthetic
+    - Manipulated
+
+  # Normalization
+  normalization:
+    coords: minmax
+    duration: divide_1000
+    pupil: zscore
+    features: zscore
+
+  # Augmentation
+  augmentation:
+    enabled: true
+    gaussian_noise_std: 0.005
+    fixation_drop_rate: 0.05
+    feature_dropout: 0.05
+    mixup:
+      enabled: true
+      alpha: 0.2
+
+# ----- Training -----
+training:
+  optimizer: AdamW
+  lr: 5.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+
+  scheduler: CosineAnnealingWarmRestarts
+  T_0: 20
+  T_mult: 2
+  eta_min: 1.0e-6
+  warmup_epochs: 5
+  warmup_lr: 1.0e-5
+
+  # Focal Loss + Entropy Sparsity Reg
+  loss:
+    type: focal_with_entropy_reg
+    focal_alpha: 0.25
+    focal_gamma: 2.0
+    entropy_lambda: 0.01        # Sparsity regularization weight
+    entropy_eps: 1.0e-8
+
+  epochs: 200
+  batch_size: 32
+  patience: 20
+  gradient_clip_val: 1.0
+  mixed_precision: true
+
+# ----- Evaluation -----
+evaluation:
+  cv_folds: 4                   # GroupKFold(n_splits=4)
+  cv_type: group_kfold
+  group_column: Subject_ID
+  seeds: [42, 123, 456, 789]
+  metrics:
+    - accuracy
+    - auc
+    - f1
+    - precision
+    - recall
+    - specificity
+
+# ----- Probability Aggregation (Tier 3 style) -----
+aggregation:
+  type: optuna_weighted          # Context-weighted prob aggregation
+  optuna_trials: 500
+  categories: [Social, Manipulated, Natural, Synthetic]
+
+# ----- Explainability -----
+explainability:
+  attention_viz: true
+  entropy_tracking: true
+  shap:
+    enabled: true
+    n_background: 50
+  gnn_explainer: true
+
+# ----- Logging -----
+logging:
+  tracker: wandb
+  project_name: "sz-gnn-cefam"
+  log_every_n_steps: 10
+  save_top_k: 3
+  monitor_metric: auc
+  monitor_mode: max
+
+# ----- Paths -----
+paths:
+  checkpoint_dir: "results/checkpoints/"
+  log_dir: "results/logs/"
+  figure_dir: "results/figures/"
+
+# ----- Reproducibility -----
+seed: 42
+deterministic: true

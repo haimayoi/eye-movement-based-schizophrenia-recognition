@@ -1,0 +1,53 @@
+# ===== Directories =====
+data/
+results/
+checkpoints/
+logs/
+wandb/
+outputs/
+__pycache__/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ===== Python =====
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+
+# ===== Environment =====
+venv/
+env/
+.env
+*.env
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Model checkpoints =====
+*.pt
+*.pth
+*.ckpt
+*.h5
+!configs/*.yaml
+
+# ===== Large files =====
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z

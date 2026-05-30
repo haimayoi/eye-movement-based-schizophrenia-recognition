@@ -1,0 +1,235 @@
+# ============================================================
+# Bidirectional Cross-Attention Hybrid Stream (BiCA-HS) Config
+# Eye Movement-Based Schizophrenia Recognition
+# ============================================================
+
+# ----- Model Architecture -----
+model:
+  name: "BiCA-HS"
+  
+  # Stream 1: Learned Stream (Transformer Encoder)
+  learned_stream:
+    d_input: 5              # (x, y, timestamp, duration, pupil)
+    d_model: 128
+    nhead: 4
+    num_layers: 4
+    d_ff: 512               # Feed-forward dimension
+    dropout: 0.1
+    activation: gelu
+    max_seq_len: 200
+    pos_encoding: sinusoidal  # sinusoidal | learnable
+    pre_norm: true            # Pre-LayerNorm (more stable)
+  
+  # Stream 2: Handcrafted Biomarker Stream
+  biomarker_stream:
+    d_bio: 52               # Number of handcrafted features
+    hidden_dims: [256, 128]
+    dropout: [0.2, 0.1]
+    activation: gelu
+    batch_norm: true
+  
+  # Bidirectional Cross-Attention Module
+  cross_attention:
+    d_model: 128
+    nhead: 4
+    dropout: 0.1
+    num_layers: 1            # Number of cross-attention layers
+    residual: true
+  
+  # Fusion & Classification
+  fusion:
+    output_dim: 256          # d_model * 2 (concat two directions)
+    layer_norm: true
+  
+  classifier:
+    hidden_dims: [256, 128]
+    dropout: [0.3, 0.2]
+    activation: gelu
+  
+  # Multi-Stimulus Aggregation
+  aggregation:
+    type: attention_weighted  # attention_weighted | majority_voting | mean
+    embed_dim: 256
+
+# ----- Data -----
+data:
+  dataset: EMS
+  data_dir: "data/raw/"
+  processed_dir: "data/processed/"
+  features_dir: "data/processed/features/"
+  stimuli_dir: "data/stimuli/"
+  
+  # Sequence parameters
+  max_seq_len: 200
+  padding_value: 0.0
+  
+  # Input features for Learned Stream
+  sequence_features:
+    - x_coord                 # Normalized X [0, 1]
+    - y_coord                 # Normalized Y [0, 1]
+    - timestamp               # Seconds from trial start
+    - fixation_duration        # Duration in seconds
+    - pupil_diameter           # Z-score normalized
+  
+  # Biomarker feature groups
+  biomarker_groups:
+    fixation:                  # 12 features
+      enabled: true
+      features:
+        - fix_duration_mean
+        - fix_duration_std
+        - fix_duration_median
+        - fix_count
+        - fix_dispersion_x
+        - fix_dispersion_y
+        - fix_centroid_dist
+        - fix_duration_p10
+        - fix_duration_p25
+        - fix_duration_p75
+        - fix_duration_p90
+        - fix_duration_skew
+    
+    saccade:                   # 12 features
+      enabled: true
+      features:
+        - sacc_amplitude_mean
+        - sacc_amplitude_max
+        - sacc_amplitude_std
+        - sacc_velocity_mean
+        - sacc_velocity_peak
+        - sacc_count
+        - sacc_duration_mean
+        - sacc_dir_entropy
+        - sacc_main_seq_ratio
+        - sacc_amplitude_p25
+        - sacc_amplitude_p75
+        - sacc_angle_std
+    
+    scanpath:                  # 12 features
+      enabled: true
+      features:
+        - sp_convex_hull_area
+        - sp_entropy
+        - sp_total_length
+        - sp_recurrence_rate
+        - sp_ambient_focal_ratio
+        - sp_transition_entropy
+        - sp_path_regularity
+        - sp_roi_coverage
+        - sp_mean_revisit_time
+        - sp_stationary_entropy
+        - sp_acceleration_mean
+        - sp_jerk_mean
+    
+    pupil:                     # 8 features
+      enabled: true
+      features:
+        - pup_diameter_mean
+        - pup_diameter_std
+        - pup_dilation_rate
+        - pup_constriction_rate
+        - pup_ica
+        - pup_range
+        - pup_cv
+        - pup_slope
+    
+    combined:                  # 8 features
+      enabled: true
+      features:
+        - fix_sacc_ratio
+        - exploration_exploitation
+        - gaze_transition_asymmetry
+        - first_fixation_duration
+        - time_to_first_sacc
+        - progressive_regressive_ratio
+        - pup_fix_correlation
+        - velocity_curvature_correlation
+  
+  # Normalization
+  normalization:
+    sequence: minmax           # For sequence data
+    biomarkers: zscore         # Z-score standardization per feature
+  
+  # Augmentation
+  augmentation:
+    enabled: true
+    gaussian_noise_std: 0.005  # Noise on (x, y) in sequence
+    sequence_crop_range: [0.7, 0.9]  # Random subsequence crop
+    temporal_jitter: 0.05      # ±5% fixation duration
+    feature_dropout: 0.05      # Zero-out 5% biomarker features
+    mixup:
+      enabled: true
+      alpha: 0.2
+
+# ----- Training -----
+training:
+  # Optimizer
+  optimizer: AdamW
+  lr: 5.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.98]
+  
+  # Scheduler
+  scheduler: CosineAnnealingLR
+  T_max: 150
+  eta_min: 1.0e-6
+  warmup_epochs: 5
+  warmup_lr: 1.0e-5
+  
+  # Loss
+  loss: cross_entropy
+  label_smoothing: 0.1
+  
+  # Training loop
+  epochs: 150
+  batch_size: 16
+  patience: 15
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 2
+  
+  # Mixed precision
+  mixed_precision: true
+
+# ----- Evaluation -----
+evaluation:
+  cv_folds: 5
+  cv_type: stratified
+  split_level: subject
+  seeds: [42, 123, 456, 789, 2026]
+  metrics:
+    - accuracy
+    - auc
+    - f1
+    - precision
+    - recall
+    - specificity
+
+# ----- Explainability -----
+explainability:
+  cross_attention_viz: true
+  shap:
+    enabled: true
+    n_background: 50
+    n_test: 20
+  temporal_attention: true
+  feature_importance: true
+
+# ----- Logging -----
+logging:
+  tracker: wandb
+  project_name: "sz-bica"
+  log_every_n_steps: 10
+  save_top_k: 3
+  monitor_metric: auc
+  monitor_mode: max
+
+# ----- Paths -----
+paths:
+  checkpoint_dir: "Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/"
+  log_dir: "Bidirectional Cross-Attention Hybrid Stream/results/logs/"
+  figure_dir: "Bidirectional Cross-Attention Hybrid Stream/results/figures/"
+
+# ----- Reproducibility -----
+seed: 42
+deterministic: true
+benchmark: false
