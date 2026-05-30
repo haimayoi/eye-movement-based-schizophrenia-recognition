@@ -185,6 +185,65 @@ def main():
         os.makedirs(checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(checkpoint_dir, f"{prefix}_fold_{fold}_best.pt")
         
+        # Checkpoint resumption check (skip training if checkpoint already exists)
+        if args.overfit_batches == 0 and os.path.exists(checkpoint_path):
+            print(f"Found existing checkpoint at {checkpoint_path}. Resuming and evaluating...")
+            model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+            model.eval()
+            val_loss = 0.0
+            val_preds = []
+            val_targets = []
+            val_subj_preds = []
+            with torch.no_grad():
+                for batch in val_loader:
+                    batch = batch.to(device)
+                    if not is_standalone:
+                        hc_batch = []
+                        for sub_id, stim_id in zip(batch.subject_id, batch.stimulus_id):
+                            s_id = int(sub_id.item()) if torch.is_tensor(sub_id) else int(sub_id)
+                            hc_batch.append(flat_features_dict[(s_id, stim_id)])
+                        hc_tensor = torch.tensor(np.array(hc_batch), dtype=torch.float32).to(device)
+                    else:
+                        hc_tensor = None
+                    logits, gnn_attn, _, _ = model(batch, hc_tensor)
+                    targets = batch.y
+                    loss = criterion(logits, targets, attention_weights=gnn_attn)
+                    val_loss += loss.item() * batch.num_graphs
+                    probs = torch.softmax(logits, dim=-1)[:, 1].cpu().numpy()
+                    val_preds.extend(probs)
+                    val_targets.extend(targets.cpu().numpy())
+                    for i in range(batch.num_graphs):
+                        s_id = int(batch.subject_id[i].item()) if torch.is_tensor(batch.subject_id[i]) else int(batch.subject_id[i])
+                        val_subj_preds.append({
+                            "Subject_ID": s_id,
+                            "Stimulus_ID": batch.stimulus_id[i],
+                            "Label": int(batch.y[i].item()),
+                            "Pred_Proba": float(probs[i])
+                        })
+            val_loss = val_loss / len(val_graphs)
+            val_auc_trial = roc_auc_score(val_targets, val_preds) if len(np.unique(val_targets)) > 1 else 0.5
+            df_val_subj = pd.DataFrame(val_subj_preds)
+            df_val_subj['Category'] = df_val_subj['Stimulus_ID'].map(category_map)
+            grouped_subj = df_val_subj.groupby(['Subject_ID', 'Category', 'Label'])['Pred_Proba'].mean().reset_index()
+            pivoted_subj = grouped_subj.pivot(index=['Subject_ID', 'Label'], columns='Category', values='Pred_Proba').reset_index()
+            # Ensure all categories exist in validation dataframe
+            for cat in ['Social', 'Manipulated', 'Natural', 'Synthetic']:
+                if cat not in pivoted_subj.columns:
+                    pivoted_subj[cat] = 0.5
+            pivoted_subj['Pred_Proba_Subject'] = pivoted_subj[['Social', 'Manipulated', 'Natural', 'Synthetic']].mean(axis=1)
+            val_auc_subject = roc_auc_score(pivoted_subj['Label'].values, pivoted_subj['Pred_Proba_Subject'].values)
+            print(f"Loaded checkpoint - Val Loss: {val_loss:.4f} | Val Trial AUC: {val_auc_trial:.4f} | Val Subject AUC: {val_auc_subject:.4f}")
+            best_val_auc = val_auc_subject
+            best_metrics = calculate_metrics(pivoted_subj['Label'].values, pivoted_subj['Pred_Proba_Subject'].values)
+            best_metrics['epoch'] = -1
+            best_metrics['fold'] = fold
+            best_subj_preds = pivoted_subj.copy()
+            best_subj_preds['Fold'] = fold
+            best_fold_aucs.append(best_val_auc)
+            cv_results.append(best_metrics)
+            all_val_preds.append(best_subj_preds)
+            continue
+        
         # Overfit test if requested
         if args.overfit_batches > 0:
             print(f"Sanity Check: Overfitting on {args.overfit_batches} batch(es)...")
@@ -339,8 +398,9 @@ def main():
     # Save overall predictions and metrics
     if all_val_preds:
         df_all_val_preds = pd.concat(all_val_preds, ignore_index=True)
-        os.makedirs("results", exist_ok=True)
-        val_preds_path = f"results/{prefix}_subject_val_predictions.csv"
+        results_dir = config['paths'].get('log_dir', 'results/')
+        os.makedirs(results_dir, exist_ok=True)
+        val_preds_path = os.path.join(results_dir, f"{prefix}_subject_val_predictions.csv")
         df_all_val_preds.to_csv(val_preds_path, index=False)
         print(f"\nSaved overall validation predictions to {val_preds_path}")
         
@@ -361,7 +421,7 @@ def main():
             "std_fold_accuracy": float(np.std([r['accuracy'] for r in cv_results]))
         }
         
-        summary_path = f"results/{prefix}_results_summary.json"
+        summary_path = os.path.join(results_dir, f"{prefix}_results_summary.json")
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=4)
         print(f"Saved results summary to {summary_path}")

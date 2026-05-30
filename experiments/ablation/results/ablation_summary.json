@@ -1,0 +1,31 @@
+{
+    "experiment": "Ablation Study - Eye Movement-Based Schizophrenia Recognition",
+    "models_evaluated": [
+        "GNN+CEFAM (Full Hybrid)",
+        "ST-GNN (GNN Only)",
+        "BiCA-HS (Transformer)",
+        "XGBoost (Tabular Only)"
+    ],
+    "sota_reference": {
+        "model": "MSNet (Song et al., IEEE TNNLS 2025)",
+        "accuracy": 0.8125,
+        "auc": 0.8854
+    },
+    "key_findings": [
+        "Best model: BiCA-HS (Transformer) with AUC=0.9498, ACC=0.9125",
+        "CEFAM Fusion + Handcrafted Stream: dAUC=+0.2616, dACC=+0.2188",
+        "GNN Stream (Graph Topology): dAUC=+0.0331, dACC=+0.0375",
+        "Transformer Encoder (vs GAT): dAUC=+0.0386, dACC=+0.0750",
+        "Full BiCA-HS vs GNN Standalone: dAUC=+0.3002, dACC=+0.2937",
+        "Most stable model: GNN+CEFAM (Full Hybrid) (CV_AUC=0.0336)"
+    ],
+    "files_generated": [
+        "F1_model_comparison.csv",
+        "F2_component_contribution.csv",
+        "F3_category_analysis.csv",
+        "F4_threshold_sensitivity.csv",
+        "F5_fold_stability.csv",
+        "F6_aggregation_weights.csv",
+        "F7_roc_curve_data.csv"
+    ]
+}

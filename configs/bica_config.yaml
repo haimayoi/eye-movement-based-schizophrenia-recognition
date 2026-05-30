@@ -225,9 +225,9 @@ logging:
 
 # ----- Paths -----
 paths:
-  checkpoint_dir: "Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/"
-  log_dir: "Bidirectional Cross-Attention Hybrid Stream/results/logs/"
-  figure_dir: "Bidirectional Cross-Attention Hybrid Stream/results/figures/"
+  checkpoint_dir: "results/bica/checkpoints/"
+  log_dir: "results/bica/"
+  figure_dir: "results/bica/figures/"
 
 # ----- Reproducibility -----
 seed: 42

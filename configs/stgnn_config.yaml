@@ -99,9 +99,9 @@ evaluation:
 
 # ----- Paths -----
 paths:
-  checkpoint_dir: "Spatiotemporal GNN/results/checkpoints/"
-  log_dir: "Spatiotemporal GNN/results/logs/"
-  figure_dir: "Spatiotemporal GNN/results/figures/"
+  checkpoint_dir: "results/stgnn/checkpoints/"
+  log_dir: "results/stgnn/"
+  figure_dir: "results/stgnn/figures/"
 
 seed: 42
 deterministic: true

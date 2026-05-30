@@ -200,9 +200,9 @@ logging:
 
 # ----- Paths -----
 paths:
-  checkpoint_dir: "results/checkpoints/"
-  log_dir: "results/logs/"
-  figure_dir: "results/figures/"
+  checkpoint_dir: "results/cefam/checkpoints/"
+  log_dir: "results/cefam/"
+  figure_dir: "results/cefam/figures/"
 
 # ----- Reproducibility -----
 seed: 42

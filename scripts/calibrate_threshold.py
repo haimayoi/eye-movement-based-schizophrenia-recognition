@@ -6,12 +6,28 @@ from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_sc
 
 def calibrate():
     parser = argparse.ArgumentParser(description="Calibrate decision threshold for predictions")
-    parser.add_argument("--preds", type=str, default="results/cefam_subject_val_predictions.csv", help="Path to predictions CSV")
+    parser.add_argument("--preds", type=str, default="results/cefam/cefam_subject_val_predictions.csv", help="Path to predictions CSV")
     args = parser.parse_args()
     
     if not os.path.exists(args.preds):
-        print(f"Error: Predictions file not found at {args.preds}")
-        return
+        # Fallback check under results/cefam/, results/stgnn/, or results/
+        candidates = [
+            args.preds,
+            os.path.join("results/cefam", os.path.basename(args.preds)),
+            os.path.join("results/stgnn", os.path.basename(args.preds)),
+            os.path.join("results/bica", os.path.basename(args.preds)),
+            os.path.join("results", os.path.basename(args.preds)),
+            os.path.join("Bidirectional Cross-Attention Hybrid Stream/results/logs", os.path.basename(args.preds))
+        ]
+        found = False
+        for c in candidates:
+            if os.path.exists(c):
+                args.preds = c
+                found = True
+                break
+        if not found:
+            print(f"Error: Predictions file not found. Checked: {candidates}")
+            return
         
     print(f"Loading predictions from {args.preds}...")
     df = pd.read_csv(args.preds)
