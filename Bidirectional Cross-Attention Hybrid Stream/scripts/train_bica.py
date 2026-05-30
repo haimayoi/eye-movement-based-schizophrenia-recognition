@@ -218,7 +218,10 @@ def main():
     print(f"Total train/valid trials: {len(train_valid_trials)}")
     print(f"Total test trials: {len(test_trials)}")
     
-    cv_folds = config['evaluation'].get('cv_folds', 4)
+    # Cap folds by the actual splits present in the Train_Valid split file (which is 4 sets: Set_0, Set_1, Set_2, Set_3)
+    num_split_folds = len(set(subject_to_fold.values()))
+    cv_folds = min(config['evaluation'].get('cv_folds', 4), num_split_folds)
+    
     best_fold_aucs = []
     cv_results = []
     all_val_preds = []
