@@ -76,10 +76,14 @@ class BiCADataset(Dataset):
             x = df_sorted['FIX_X'].values / 1024.0
             # 2. Normalized Y [0, 1]
             y = df_sorted['FIX_Y'].values / 768.0
-            # 3. Timestamp in seconds from trial start
-            t = df_sorted['FIX_START'].values / 1000.0
             # 4. Fixation duration in seconds
             dur = df_sorted['FIX_DURATION'].values / 1000.0
+            
+            # 3. Timestamp in seconds from trial start (reconstructed via cumulative sum of durations)
+            t = np.zeros_like(dur)
+            if len(dur) > 1:
+                t[1:] = np.cumsum(dur[:-1])
+                
             # 5. Z-score normalized pupil size
             pupil = (df_sorted['FIX_PUPIL'].values - pupil_mean) / (pupil_std + 1e-8)
             
