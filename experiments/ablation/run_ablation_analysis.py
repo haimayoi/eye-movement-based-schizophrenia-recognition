@@ -95,28 +95,37 @@ def find_optimal_threshold(y_true, y_pred_proba, metric="accuracy"):
     return best_th
 
 
+def _resolve(results_dir, subdir, filename):
+    """Try subdir first, then subdir_s42 (seed-based layout), then subdir_42."""
+    for candidate in [subdir, f"{subdir}_s42", f"{subdir}_42"]:
+        p = os.path.join(results_dir, candidate, filename)
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def load_model_predictions(results_dir):
     """Load all model prediction files from the results directory."""
     models = {}
 
     # CEFAM (GNN + CEFAM Hybrid)
-    cefam_path = os.path.join(results_dir, "cefam", "cefam_subject_val_predictions.csv")
-    if os.path.exists(cefam_path):
+    cefam_path = _resolve(results_dir, "cefam", "cefam_subject_val_predictions.csv")
+    if cefam_path:
         models["GNN+CEFAM (Full Hybrid)"] = pd.read_csv(cefam_path)
 
     # STGNN (GNN Stream Only)
-    stgnn_path = os.path.join(results_dir, "stgnn", "stgnn_subject_val_predictions.csv")
-    if os.path.exists(stgnn_path):
+    stgnn_path = _resolve(results_dir, "stgnn", "stgnn_subject_val_predictions.csv")
+    if stgnn_path:
         models["ST-GNN (GNN Only)"] = pd.read_csv(stgnn_path)
 
     # BiCA-HS (Transformer + Cross-Attention)
-    bica_path = os.path.join(results_dir, "bica", "bica_subject_val_predictions.csv")
-    if os.path.exists(bica_path):
+    bica_path = _resolve(results_dir, "bica", "bica_subject_val_predictions.csv")
+    if bica_path:
         models["BiCA-HS (Transformer)"] = pd.read_csv(bica_path)
 
     # XGBoost (Tabular Baseline)
-    xgb_path = os.path.join(results_dir, "baselines", "xgboost_subject_val_preds.csv")
-    if os.path.exists(xgb_path):
+    xgb_path = _resolve(results_dir, "baselines", "xgboost_subject_val_preds.csv")
+    if xgb_path:
         models["XGBoost (Tabular Only)"] = pd.read_csv(xgb_path)
 
     # Load JSON summaries for per-fold data
@@ -126,8 +135,8 @@ def load_model_predictions(results_dir):
         ("ST-GNN (GNN Only)", "stgnn", "stgnn"),
         ("BiCA-HS (Transformer)", "bica", "bica"),
     ]:
-        json_path = os.path.join(results_dir, subdir, f"{prefix}_results_summary.json")
-        if os.path.exists(json_path):
+        json_path = _resolve(results_dir, subdir, f"{prefix}_results_summary.json")
+        if json_path:
             with open(json_path, 'r') as f:
                 summaries[name] = json.load(f)
 

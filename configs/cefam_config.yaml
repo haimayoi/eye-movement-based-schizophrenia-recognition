@@ -10,7 +10,7 @@ model:
   
   # GNN Stream
   gnn_stream:
-    node_dim: 69                # 5 (low-level) + 64 (RINet projected)
+    node_dim: 69                # 5 (low-level) + 64 (ResNet50 projected)
     edge_dim: 2                 # amplitude, angle
     gat:
       num_layers: 2
@@ -25,9 +25,9 @@ model:
       gate_hidden_dim: 64
     output_dim: 128             # z_graph dimension
 
-  # RINet Projection
-  rinet_projector:
-    input_dim: 1056
+  # ResNet50 Visual Feature Projection
+  resnet_projector:
+    input_dim: 2048
     hidden_dim: 256
     output_dim: 64
     dropout: 0.3
@@ -65,7 +65,7 @@ data:
   features_stimulus_path: "data/processed/features_stimulus_level.csv"
   features_subject_path: "data/processed/features_subject_level.csv"
   graphs_dir: "data/processed/graphs/"
-  rinet_path: "data/external/feature_dict_RINet.npy"
+  resnet_path: "data/external/feature_dict_ResNet50.npy"
   stimuli_dir: "data/stimuli/"
   categories_path: "data/metadata/stimulus_categories.csv"
 
@@ -100,8 +100,8 @@ data:
       - duration_norm           # FIX_DURATION normalized
       - pupil_size              # FIX_PUPIL normalized
       - pupil_diff              # Δ pupil between consecutive fixations
-    rinet_dim: 1056
-    rinet_projected_dim: 64
+    resnet_dim: 2048
+    resnet_projected_dim: 64
 
   # Edge features
   edge_features:

@@ -8,6 +8,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
+import sys
+# Ensure project root is on the path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.tier3_tabular.group_kfold import get_subject_folds
 from src.models.bica.model import BiCAHSModel
@@ -158,7 +161,19 @@ def main():
         
     seed = args.seed or config.get('seed', 42)
     set_seed(seed)
-    
+
+    # Paths — seed-specific subdirectory for non-default seeds
+    _default_seed = config.get('seed', 42)
+    _seed_suffix = f'_s{seed}' if seed != _default_seed else ''
+    _base_results = 'Bidirectional Cross-Attention Hybrid Stream/results/'
+    _base_ckpt = 'Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/'
+    results_dir = (config['paths'].get('log_dir', _base_results) if not _seed_suffix
+                   else _base_results.rstrip('/') + _seed_suffix + '/')
+    checkpoint_dir = (config['paths'].get('checkpoint_dir', _base_ckpt) if not _seed_suffix
+                      else _base_ckpt.rstrip('/') + _seed_suffix + '/')
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     data_config = config['data']
     training_config = config['training']
     
@@ -287,9 +302,6 @@ def main():
         patience = training_config.get('patience', 15)
         patience_counter = 0
         
-        # Checkpoint directories
-        checkpoint_dir = config['paths'].get('checkpoint_dir', 'Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/')
-        os.makedirs(checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(checkpoint_dir, f"bica_fold_{fold}_best.pt")
         
         # Checkpoint resumption check (skip training if checkpoint already exists)
@@ -479,8 +491,6 @@ def main():
     # Save overall predictions
     if all_val_preds:
         df_all_val_preds = pd.concat(all_val_preds, ignore_index=True)
-        results_dir = config['paths'].get('log_dir', 'Bidirectional Cross-Attention Hybrid Stream/results/')
-        os.makedirs(results_dir, exist_ok=True)
         val_preds_path = os.path.join(results_dir, "bica_subject_val_predictions.csv")
         df_all_val_preds.to_csv(val_preds_path, index=False)
         print(f"\nSaved overall validation predictions to {val_preds_path}")
@@ -501,6 +511,84 @@ def main():
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=4)
         print(f"Saved results summary to {summary_path}")
+
+    # ── Test Set Inference ─────────────────────────────────────────────────────
+    if test_trials:
+        print(f"\n--- Running Test Set Inference on {len(test_trials)} trials ---")
+        test_fold_preds = []
+
+        for fold in range(cv_folds):
+            ckpt = os.path.join(checkpoint_dir, f"bica_fold_{fold}_best.pt")
+            if not os.path.exists(ckpt):
+                print(f"  Fold {fold}: checkpoint not found at {ckpt}, skipping.")
+                continue
+
+            d_bio = len(feature_cols)
+            m = BiCAHSModel(d_bio=d_bio, config=config).to(device)
+            m.load_state_dict(torch.load(ckpt, map_location=device))
+            m.eval()
+
+            test_loader = DataLoader(
+                CustomDataset(test_trials),
+                batch_size=training_config.get('batch_size', 16),
+                shuffle=False)
+            fold_subj_preds = []
+
+            with torch.no_grad():
+                for seqs, masks, flats, targets, sub_ids, stim_ids, _ in test_loader:
+                    seqs = seqs.to(device)
+                    masks = masks.to(device)
+                    flats = flats.to(device)
+                    targets = targets.to(device)
+
+                    logits, _, _ = m(seqs, masks, flats)
+                    probs = torch.softmax(logits, dim=-1)[:, 1].cpu().numpy()
+
+                    for i in range(seqs.size(0)):
+                        fold_subj_preds.append({
+                            "Subject_ID": int(sub_ids[i]),
+                            "Stimulus_ID": stim_ids[i],
+                            "Label": int(targets[i].item()),
+                            "Pred_Proba": float(probs[i])
+                        })
+
+            df_fold = pd.DataFrame(fold_subj_preds)
+            df_fold['Category'] = df_fold['Stimulus_ID'].map(category_map)
+            grouped = df_fold.groupby(
+                ['Subject_ID', 'Category', 'Label'])['Pred_Proba'].mean().reset_index()
+            pivoted = grouped.pivot(
+                index=['Subject_ID', 'Label'],
+                columns='Category', values='Pred_Proba').reset_index()
+            for cat in ['Social', 'Manipulated', 'Natural', 'Synthetic']:
+                if cat not in pivoted.columns:
+                    pivoted[cat] = 0.5
+            pivoted['Pred_Proba_Subject'] = pivoted[
+                ['Social', 'Manipulated', 'Natural', 'Synthetic']].mean(axis=1)
+            pivoted['Fold'] = fold
+            test_fold_preds.append(pivoted)
+            print(f"  Fold {fold}: {len(pivoted)} test subjects processed.")
+
+        if test_fold_preds:
+            df_test_all = pd.concat(test_fold_preds, ignore_index=True)
+            df_test_ensemble = (
+                df_test_all.groupby('Subject_ID')
+                .agg(Label=('Label', 'first'),
+                     Pred_Proba_Subject=('Pred_Proba_Subject', 'mean'))
+                .reset_index()
+            )
+            test_path = os.path.join(results_dir, "bica_test_predictions.csv")
+            df_test_ensemble.to_csv(test_path, index=False)
+            print(f"[Test] Saved test set predictions to {test_path}")
+
+            if len(df_test_ensemble['Label'].unique()) > 1:
+                test_metrics = calculate_metrics(
+                    df_test_ensemble['Label'].values,
+                    df_test_ensemble['Pred_Proba_Subject'].values)
+                print("\n--- Test Set Metrics ---")
+                for k, v in test_metrics.items():
+                    print(f"  {k.capitalize()}: {v:.4f}")
+    else:
+        print("\n[Test] No test trials found; skipping test inference.")
 
 if __name__ == "__main__":
     main()

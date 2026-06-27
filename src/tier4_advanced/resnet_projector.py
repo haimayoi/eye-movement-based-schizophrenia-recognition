@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 
-class RINetProjector(nn.Module):
+
+class ResNetProjector(nn.Module):
     """
-    Projector MLP to compress 1056-dim RINet visual features to 64-dim.
-    Reduces parameter space and prevents overfitting.
+    Projector MLP to compress 2048-dim ResNet50 visual features to 64-dim.
+    Reduces parameter space and prevents overfitting on small datasets.
     """
-    def __init__(self, input_dim=1056, hidden_dim=256, output_dim=64, dropout=0.3):
+    def __init__(self, input_dim=2048, hidden_dim=256, output_dim=64, dropout=0.3):
         super().__init__()
         self.projector = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -17,14 +18,11 @@ class RINetProjector(nn.Module):
             nn.BatchNorm1d(output_dim),
             nn.ReLU(),
         )
-        
+
     def forward(self, x):
-        # x shape: [num_nodes, 1056]
-        # BatchNorm1d requires batch dimension > 1. If we have only 1 node, it might fail.
-        # So we check if we need to adjust or run with training mode / eval mode safely.
+        # x: [num_nodes, input_dim] (typically 2048 from ResNet50)
+        # BatchNorm1d requires batch > 1; fall back to eval mode for single-node edge case.
         if x.shape[0] <= 1:
-            # Bypass batch norm if only 1 node (or in eval mode, it works fine)
-            # To be safe, we temporarily set batchnorm to eval if input is 1-dimensional
             was_training = self.training
             self.eval()
             out = self.projector(x)

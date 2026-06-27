@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.tier4_advanced.rinet_projector import RINetProjector
+from src.tier4_advanced.resnet_projector import ResNetProjector
 from src.tier4_advanced.gnn_stream import GNNStream
 
 class Classifier(nn.Module):
@@ -36,18 +36,18 @@ class STGNNStandaloneModel(nn.Module):
         self.config = config
         model_cfg = config['model']
         
-        # 1. RINet Projector (to project 1056-dim features to 64-dim)
-        rinet_cfg = model_cfg['rinet_projector']
-        self.rinet_projector = RINetProjector(
-            input_dim=rinet_cfg.get('input_dim', 1056),
-            hidden_dim=rinet_cfg.get('hidden_dim', 256),
-            output_dim=rinet_cfg.get('output_dim', 64),
-            dropout=rinet_cfg.get('dropout', 0.3)
+        # 1. ResNet50 Projector (2048-dim ResNet50 features → 64-dim)
+        resnet_cfg = model_cfg.get('resnet_projector', model_cfg.get('rinet_projector', {}))
+        self.resnet_projector = ResNetProjector(
+            input_dim=resnet_cfg.get('input_dim', 2048),
+            hidden_dim=resnet_cfg.get('hidden_dim', 256),
+            output_dim=resnet_cfg.get('output_dim', 64),
+            dropout=resnet_cfg.get('dropout', 0.3)
         )
         
         # 2. GNN Stream
         gnn_cfg = model_cfg['gnn']
-        # Node features dimension in standalone mode: 5 low level + 64 RINet projected = 69
+        # Node features: 5 low-level + 64 ResNet50-projected = 69
         self.gnn_stream = GNNStream(
             in_dim=gnn_cfg.get('node_dim', 69),
             edge_dim=gnn_cfg.get('edge_dim', 2),
@@ -74,24 +74,26 @@ class STGNNStandaloneModel(nn.Module):
         """
         x_raw = data.x
         low_level = x_raw[:, :5]
-        rinet_raw = x_raw[:, 5:]
-        
-        # Project RINet features: [num_nodes, 64]
-        rinet_proj = self.rinet_projector(rinet_raw)
-        
+        resnet_raw = x_raw[:, 5:]
+
+        # Project ResNet50 features: [num_nodes, 2048] → [num_nodes, 64]
+        resnet_proj = self.resnet_projector(resnet_raw)
+
         # Concatenate: [num_nodes, 69]
-        node_features = torch.cat([low_level, rinet_proj], dim=-1)
+        node_features = torch.cat([low_level, resnet_proj], dim=-1)
         
-        # Pass through GNN Stream: z_graph = [batch_size, 128]
-        z_graph, gnn_attn_weights = self.gnn_stream(
+        # GNNStream now returns (z_graph, h_nodes, attn_weights)
+        # h_nodes is not used in standalone mode (no CEFAM fusion)
+        z_graph, _h_nodes, gnn_attn_weights = self.gnn_stream(
             x=node_features,
             edge_index=data.edge_index,
             edge_attr=data.edge_attr,
-            batch=data.batch
+            batch=data.batch,
+            mask=data.mask if hasattr(data, 'mask') else None
         )
-        
+
         # Classify directly from z_graph
         logits = self.classifier(z_graph)
-        
-        # Return logits and gnn_attn_weights; others are None since no CEFAM fusion is present
+
+        # Return None for CEFAM attentions (no fusion in standalone mode)
         return logits, gnn_attn_weights, None, None

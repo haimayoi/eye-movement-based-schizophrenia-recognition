@@ -1,6 +1,6 @@
 # 🔬 Spatiotemporal Graph Neural Network — Tier 4 GNN Stream
 
-> **Biểu diễn scanpath dưới dạng đồ thị phi Euclid không-thời gian có hướng và trọng số, xử lý bằng 2-layer GAT kết hợp RINet visual features (1056→64) và Padding Masking, nhằm nhận dạng tâm thần phân liệt.**
+> **Biểu diễn scanpath dưới dạng đồ thị phi Euclid không-thời gian có hướng và trọng số, xử lý bằng 2-layer GAT kết hợp ResNet50 visual features (2048→64) và Padding Masking, nhằm nhận dạng tâm thần phân liệt.**
 
 ---
 
@@ -11,7 +11,7 @@
 - [Graph Construction](#-graph-construction)
 - [Node & Edge Features](#-node--edge-features)
 - [Padding Masking Strategy](#-padding-masking-strategy)
-- [RINet Visual Feature Projection](#-rinet-visual-feature-projection)
+- [ResNet50 Visual Feature Projection](#-resnet50-visual-feature-projection)
 - [GAT Stream & Global Attention Pooling](#-gat-stream--global-attention-pooling)
 - [Ablation Studies](#-ablation-studies)
 - [Quick Start](#-quick-start)
@@ -25,7 +25,7 @@
 GNN Stream là **nhánh đồ thị** trong kiến trúc Tier 4 (Advanced Track), có nhiệm vụ:
 1. Chuyển đổi mỗi chuỗi scanpath thành **đồ thị có hướng và trọng số** $G = (V, E)$
 2. Học biểu diễn ẩn cấu trúc liên kết không-thời gian bất thường qua GAT
-3. Nén thành vector `z_graph` để đưa vào module CEFAM fusion
+3. Nén thành vector `z_graph` để đưa vào module ACAF fusion
 
 ### Cơ sở khoa học
 - GNN trên scanpath tăng **+7.6% ~ +14.3% balanced accuracy** so với CNN/RNN (gazeRE 2024)
@@ -39,8 +39,8 @@ GNN Stream là **nhánh đồ thị** trong kiến trúc Tier 4 (Advanced Track)
 ```
 Input: Scanpath → Graph G = (V, E)
 │
-│  Nodes: [x_norm, y_norm, dur_norm, pupil, pupil_diff, RINet_64]
-│  dim = 5 + 64 = 69 per node
+│  Nodes: [x_norm, y_norm, dur_norm, pupil, pupil_diff, ResNet50_proj_64]
+│  dim = 5 + 64 = 69 per node  (ResNet50 2048-dim → projected to 64)
 │  Edges: Sequential (i→i+1) + Spatial k-NN (k=3)
 │  Edge attr: [amplitude, angle]
 │
@@ -70,7 +70,7 @@ Input: Scanpath → Graph G = (V, E)
                         │
                         ▼
               z_graph [128-dim]
-              → Feed to CEFAM Fusion
+              → Feed to ACAF Fusion
 ```
 
 ---
@@ -123,7 +123,7 @@ for i, coord in enumerate(coords):
 | 3 | `duration_norm` | 1 | FIX_DURATION (normalized) | Thời gian xử lý nhận thức |
 | 4 | `pupil_size` | 1 | FIX_PUPIL (normalized) | Kích thước đồng tử |
 | 5 | `pupil_diff` | 1 | $\text{pupil}_i - \text{pupil}_{i-1}$ | **Biến thiên đồng tử** (Δ đồng tử) |
-| 6-69 | `rinet_proj` | **64** | `feature_dict_RINet.npy` → MLP(1056→64) | Đặc trưng trực quan cục bộ nén |
+| 6-69 | `resnet_proj` | **64** | `feature_dict_ResNet50.npy` → MLP(2048→64) | Đặc trưng trực quan cục bộ nén (ResNet50) |
 | | **Total** | **69** | | |
 
 **`pupil_diff`** — feature mới quan trọng:
@@ -179,26 +179,28 @@ class PaddingMasker:
 
 ---
 
-## 🔬 RINet Visual Feature Projection
+## 🔬 ResNet50 Visual Feature Projection
 
 ### Mục đích
-File `feature_dict_RINet.npy` chứa **1056-dim** visual features trích xuất từ mô hình RINet cho mỗi fixation point → quá lớn cho GPU memory.
+File `feature_dict_ResNet50.npy` chứa **2048-dim** visual features trích xuất từ backbone **ResNet50** (ImageNet pre-trained, spatial feature map `[2048, 24, 32]`, sampled tại tọa độ fixation) cho mỗi fixation point → quá lớn cho GPU memory.
 
-### Giải pháp: MLP Projection 1056 → 64
+> Tạo file này bằng: `python src/utils/extract_resnet_features.py`
+
+### Giải pháp: MLP Projection 2048 → 64
 
 ```python
-class RINetProjector(nn.Module):
+class ResNetProjector(nn.Module):
     """
-    Giảm chiều 1056-dim RINet → 64-dim
-    Lý do: 
-    - Giảm tải bộ nhớ đồ họa (~16× compression)
+    Giảm chiều 2048-dim ResNet50 → 64-dim
+    Lý do:
+    - Giảm tải bộ nhớ đồ họa (~32× compression)
     - Tránh overfitting trên dataset nhỏ (208 subjects)
     - 64-dim đủ để encode visual semantics
     """
-    def __init__(self, input_dim=1056, output_dim=64):
+    def __init__(self, input_dim=2048, output_dim=64):
         super().__init__()
         self.projector = nn.Sequential(
-            nn.Linear(1056, 256),
+            nn.Linear(2048, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -206,7 +208,7 @@ class RINetProjector(nn.Module):
             nn.BatchNorm1d(64),
             nn.ReLU(),
         )
-    
+
     def forward(self, x):
         return self.projector(x)  # [num_nodes × 64]
 ```
@@ -214,10 +216,10 @@ class RINetProjector(nn.Module):
 ### Tích hợp với Node Features
 
 ```python
-# Final node feature = concat(low_level, rinet_projected)
-low_level = [x_norm, y_norm, dur_norm, pupil, pupil_diff]  # 5-dim
-rinet_proj = rinet_projector(rinet_raw)                      # 64-dim
-node_features = torch.cat([low_level, rinet_proj], dim=-1)   # 69-dim
+# Final node feature = concat(low_level, resnet_projected)
+low_level  = [x_norm, y_norm, dur_norm, pupil, pupil_diff]  # 5-dim
+resnet_proj = resnet_projector(resnet_raw)                    # 64-dim
+node_features = torch.cat([low_level, resnet_proj], dim=-1)  # 69-dim
 ```
 
 ---
@@ -289,8 +291,8 @@ class GATStream(nn.Module):
 | # | Experiment | Modification | Purpose |
 |:---:|---|---|---|
 | T4.1 | **Sequence length** | N ∈ {14, 20, **24**, 32} | Optimal truncation |
-| T4.2 | GNN only (no CEFAM) | Remove fusion | GNN stream standalone |
-| T4.3 | With RINet vs Without | Node: 69-dim vs 5-dim | Visual features value |
+| T4.2 | GNN only (no ACAF) | Remove fusion | GNN stream standalone |
+| T4.3 | With ResNet50 vs Without | Node: 69-dim vs 5-dim | Visual features value |
 | T4.4 | With pupil_diff vs Without | Node: 69 vs 68-dim | Pupil dynamics value |
 | T4.5 | Sequential edges only | No spatial k-NN | Spatial topology value |
 | T4.6 | Spatial edges only | No temporal | Temporal ordering value |
@@ -307,11 +309,11 @@ class GATStream(nn.Module):
 # 1. Build graphs from preprocessed data
 python src/tier4_advanced/graph_builder.py \
     --input data/processed/clean_fixations.parquet \
-    --rinet data/external/feature_dict_RINet.npy \
+    --visual-features data/external/feature_dict_ResNet50.npy \
     --output data/processed/graphs/ \
     --max-len 24 --k-neighbors 3
 
-# 2. Train GNN+CEFAM (sanity check)
+# 2. Train GNN+ACAF (sanity check)
 python scripts/train_tier4.py \
     --config configs/cefam_config.yaml \
     --overfit-batches 1 --max-epochs 50

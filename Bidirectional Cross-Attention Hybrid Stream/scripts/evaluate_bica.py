@@ -6,6 +6,9 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, confusion_matrix
+import sys
+# Ensure project root is on the path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.tier3_tabular.group_kfold import get_subject_folds
 from src.models.bica.model import BiCAHSModel

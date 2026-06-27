@@ -73,16 +73,8 @@ class LearnedStream(nn.Module):
             
         out = self.transformer_encoder(x, src_key_padding_mask=key_padding_mask)
         out = self.norm(out)  # [batch_size, seq_len, d_model]
-        
-        # Mean pooling over non-padded elements
-        if mask is not None:
-            mask_expanded = mask.unsqueeze(-1).float()  # [batch_size, seq_len, 1]
-            out_masked = out * mask_expanded
-            z_learned = out_masked.sum(dim=1) / (mask_expanded.sum(dim=1) + 1e-8)
-        else:
-            z_learned = out.mean(dim=1)
             
-        return z_learned
+        return out
 
 class BiomarkerStream(nn.Module):
     """
@@ -108,7 +100,7 @@ class BiomarkerStream(nn.Module):
 
 class BiCrossAttention(nn.Module):
     """
-    Bidirectional cross-attention between Transformer stream (z_learned)
+    Bidirectional cross-attention between Transformer stream token sequence (h_seq)
     and Biomarker stream (z_expert).
     """
     def __init__(self, d_model=128, nhead=4, dropout=0.1):
@@ -130,18 +122,37 @@ class BiCrossAttention(nn.Module):
             nn.Dropout(dropout)
         )
         
-    def forward(self, z_learned, z_expert):
-        # Shape: [batch_size, 1, d_model]
-        z_l = z_learned.unsqueeze(1)
+    def forward(self, h_seq, z_expert, mask=None):
+        # h_seq: [batch_size, seq_len, d_model]
+        # z_expert: [batch_size, d_model]
+        
+        # Unsqueeze expert representation: [batch_size, 1, d_model]
         z_e = z_expert.unsqueeze(1)
         
-        # Dir 1: Q=learned, K=V=expert
-        z_fused_1, attn_1 = self.cross_attn_1(query=z_l, key=z_e, value=z_e)
-        # Dir 2: Q=expert, K=V=learned
-        z_fused_2, attn_2 = self.cross_attn_2(query=z_e, key=z_l, value=z_l)
+        # Dir 1: Q=expert [B, 1, d_model], K=V=h_seq [B, seq_len, d_model]
+        # We invert mask for key_padding_mask: True means ignore (padding positions)
+        key_padding_mask = ~mask if mask is not None else None
+        z_fused_1, attn_1 = self.cross_attn_1(
+            query=z_e, key=h_seq, value=h_seq,
+            key_padding_mask=key_padding_mask
+        )
+        # z_fused_1 shape: [batch_size, 1, d_model] -> squeeze to [batch_size, d_model]
+        z_fused_1 = z_fused_1.squeeze(1)
         
+        # Dir 2: Q=h_seq [B, seq_len, d_model], K=V=expert [B, 1, d_model]
+        z_fused_2, attn_2 = self.cross_attn_2(query=h_seq, key=z_e, value=z_e)
+        # z_fused_2 shape: [batch_size, seq_len, d_model]
+        
+        # Pool z_fused_2 ignoring padding tokens
+        if mask is not None:
+            mask_expanded = mask.unsqueeze(-1).float()  # [batch_size, seq_len, 1]
+            z_fused_2_masked = z_fused_2 * mask_expanded
+            z_fused_2_pooled = z_fused_2_masked.sum(dim=1) / (mask_expanded.sum(dim=1) + 1e-8)
+        else:
+            z_fused_2_pooled = z_fused_2.mean(dim=1)
+            
         # Concatenate and project
-        z_concat = torch.cat([z_fused_1.squeeze(1), z_fused_2.squeeze(1)], dim=-1)
+        z_concat = torch.cat([z_fused_1, z_fused_2_pooled], dim=-1)
         z_final = self.fusion(z_concat)
         
         return z_final, attn_1, attn_2
@@ -204,14 +215,14 @@ class BiCAHSModel(nn.Module):
         mask: [batch_size, seq_len] (bool mask, True for valid tokens, False for padding)
         flat_features: [batch_size, d_bio] (flat handcrafted features)
         """
-        # 1. Learned Stream (Transformer Encoder)
-        z_learned = self.learned_stream(sequences, mask)  # [batch_size, d_model]
+        # 1. Learned Stream (Transformer Encoder outputs sequence of shape [B, seq_len, d_model])
+        h_seq = self.learned_stream(sequences, mask)
         
         # 2. Biomarker Stream (MLP)
         z_expert = self.biomarker_stream(flat_features)  # [batch_size, d_model]
         
         # 3. Cross-Attention Fusion
-        z_final, attn_1, attn_2 = self.cross_attention(z_learned, z_expert)  # [batch_size, 2 * d_model]
+        z_final, attn_1, attn_2 = self.cross_attention(h_seq, z_expert, mask)  # [batch_size, 2 * d_model]
         
         # 4. Classifier Head
         logits = self.classifier(z_final)

@@ -1,16 +1,16 @@
-# 🔬 Bidirectional Cross-Attention Fusion (CEFAM) — Tier 4 Fusion Module
+# 🔬 Asymmetric Cross-Attention Fusion (ACAF) — Tier 4 Fusion Module
 
-> **Module hợp nhất chú ý chéo hai chiều (CEFAM) cho phép hai luồng thông tin GNN và Handcrafted tương tác tương hỗ, kết hợp Focal Loss + Entropy Sparsity Regularization để tối đa hóa khả năng chẩn đoán và giải thích lâm sàng.**
+> **Module hợp nhất chú ý chéo bất đối xứng (ACAF) cho phép đặc trưng y sinh (Handcrafted Stream) hướng dẫn và truy vấn đặc trưng đồ thị (GNN Stream), kết hợp Focal Loss + Entropy Sparsity Regularization để tối đa hóa khả năng chẩn đoán và giải thích lâm sàng.**
 
 ---
 
 ## 📋 Mục Lục
 
 - [Tổng Quan](#-tổng-quan)
-- [Kiến Trúc CEFAM Chi Tiết](#-kiến-trúc-cefam-chi-tiết)
+- [Kiến Trúc ACAF Chi Tiết](#-kiến-trúc-acaf-chi-tiết)
 - [GNN Stream (z_graph)](#-gnn-stream)
 - [Handcrafted Stream (z_expert)](#-handcrafted-stream)
-- [Bidirectional Cross-Attention](#-bidirectional-cross-attention)
+- [Asymmetric Cross-Attention](#-asymmetric-cross-attention)
 - [Loss Function](#-loss-function-focal-loss--entropy-sparsity-regularization)
 - [Bộ Đặc Trưng Tier 2](#-bộ-đặc-trưng-tier-2-cho-handcrafted-stream)
 - [Contextual Delta Features](#-contextual-delta-features)
@@ -25,27 +25,28 @@
 
 ### Vai trò trong Framework
 
-CEFAM (Cross-attention Enhanced Fusion Attention Module) là **mô-đun hợp nhất** trung tâm của Tier 4, giải quyết sự **phân mảnh** giữa nhóm Y sinh (handcrafted features) và nhóm AI (deep learning):
+ACAF (Asymmetric Cross-Attention Fusion) là **mô-đun hợp nhất** trung tâm của Tier 4, giải quyết sự **phân mảnh** giữa nhóm Y sinh (handcrafted features) và nhóm AI (deep learning):
 
 ```
 Vấn đề cũ:  GNN features ──── Concatenation ──── Expert features
              (rich nhưng opaque)  (thô sơ, không    (proven nhưng
                                    tương tác)        shallow)
 
-Giải pháp:   GNN features ◄──── CEFAM ────► Expert features
-             z_graph         Bidirectional     z_expert
+Giải pháp:   GNN features ◄──── ACAF ─────► Expert features
+             z_graph         Asymmetric        z_expert
                             Cross-Attention
                             (tương hỗ động)
 ```
 
 ### Ưu thế so với fusion truyền thống
 
-| Fusion method | Tương tác | Interpretable | Expected gain |
+| Fusion method | Tương tác | Interpretable | expected direction |
 |---|:---:|:---:|:---:|
 | Concatenation | ❌ Static | ❌ | Baseline |
-| Addition/Average | ❌ Static | ❌ | ~0% |
-| Unidirectional Attention | ⚠️ One-way | ⚠️ | +3-5% |
-| **CEFAM (Bidirectional)** ✅ | ✅ **Mutual** | ✅ | **+8-10%** |
+| Addition/Average | ❌ Static | ❌ | Baseline |
+| Unidirectional Attention | ⚠️ One-way | ⚠️ | Positive |
+| **ACAF (Asymmetric)** ✅ | ✅ **Mutual/Asym** | ✅ | **Positive (requires ablation)** |
+
 
 ---
 
@@ -60,7 +61,7 @@ Giải pháp:   GNN features ◄──── CEFAM ────► Expert featur
 │  Graph G = (V, E)        │        │  Tier 2 flat features      │
 │  Nodes: 69-dim           │        │  (stimulus-level from      │
 │  [x,y,dur,pup,pup_diff,  │        │   features_stimulus_level  │
-│   RINet_64]              │        │   or subject-level +       │
+│   ResNet50_proj_64]      │        │   or subject-level +       │
 │       ↓                  │        │   delta features)          │
 │  GAT Layer 1 (4-head)    │        │       ↓                    │
 │  + EdgeAttr + BN + ELU   │        │  FC(D_flat → 256)         │
@@ -109,7 +110,7 @@ Loss = Focal Loss(α=0.25, γ=2.0) + λ · Entropy Sparsity Reg.
 
 | Component | Config | Output |
 |---|---|---|
-| Node dim | 5 (low-level) + 64 (RINet projected) = **69** | |
+| Node dim | 5 (low-level) + 64 (ResNet50 projected) = **69** | |
 | GAT Layer 1 | `GATConv(69→64, heads=4, edge_dim=2)` | `[N × 256]` |
 | GAT Layer 2 | `GATConv(256→64, heads=4)` + Residual | `[N × 256]` |
 | Global Attention Pooling | `gate_nn: 256→1` | `[batch × 256]` |
@@ -168,66 +169,63 @@ $$\mathbf{z}_{\text{final}} = \text{Linear}(\text{Concat}(\mathbf{z}_{\text{fuse
 | **Dir 1** | z_graph | z_expert | "Trong đồ thị scanpath, fixation nào **khớp** với bất thường lâm sàng?" |
 | **Dir 2** | z_expert | z_graph | "Trong biomarker vector, feature nào được **khuếch đại** bởi graph patterns?" |
 
-### Implementation
+### Implementation (Fixed — no longer degenerate)
+
+> **Lưu ý**: Phiên bản cũ dùng `z_graph.unsqueeze(1)` và `z_expert.unsqueeze(1)` với `seq_len=1`
+> → softmax luôn = 1.0 (không có learning signal). Đã sửa: Direction 1 dùng
+> `h_nodes [total_nodes, 256]` (pre-pooling GNN embeddings) làm Keys/Values, tạo ra
+> attention map `[B, 1, N]` thực sự có ý nghĩa lâm sàng.
 
 ```python
 class CEFAMFusion(nn.Module):
     """
-    Cross-attention Enhanced Fusion Attention Module
-    Bidirectional cross-attention between GNN and Expert streams
+    Cross-attention Enhanced Fusion Attention Module (Fixed Version).
+
+    Direction 1 — Expert queries Graph nodes (PRIMARY):
+        Q = z_expert  [B, 1, d_model]
+        K = h_nodes   [B, N, d_model]  (pre-pooling GNN node embeddings)
+        V = h_nodes
+        → attn_1 shape [B, 1, N]: "which fixation nodes are relevant to clinical features?"
+
+    Direction 2 — Graph queries Expert (SECONDARY):
+        Q = z_graph   [B, 1, d_model]
+        K = z_expert  [B, 1, d_model]
+        V = z_expert
+        → attn_2 shape [B, 1, 1]: symmetric (seq_len=1, kept for fusion symmetry)
     """
-    def __init__(self, d_model=128, nhead=4, dropout=0.1):
+    def __init__(self, d_model=128, nhead=4, dropout=0.1,
+                 node_emb_dim=256, max_nodes=24):
         super().__init__()
-        
-        # Direction 1: Expert guides Graph
-        self.cross_attn_1 = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=nhead,
-            dropout=dropout, batch_first=True
-        )
-        
-        # Direction 2: Graph guides Expert
-        self.cross_attn_2 = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=nhead,
-            dropout=dropout, batch_first=True
-        )
-        
-        # Fusion layer
+        self.node_proj = nn.Linear(node_emb_dim, d_model)  # 256 → 128
+        self.cross_attn_1 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.cross_attn_2 = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.fusion = nn.Sequential(
             nn.Linear(d_model * 2, d_model * 2),
             nn.LayerNorm(d_model * 2),
             nn.GELU(),
             nn.Dropout(dropout)
         )
-    
-    def forward(self, z_graph, z_expert):
+
+    def forward(self, z_graph, z_expert, h_nodes, node_batch):
         """
-        z_graph:  [batch × 128]
-        z_expert: [batch × 128]
-        Returns:  z_final [batch × 256], attn_weights
+        z_graph   : [B, d_model]  — pooled graph summary
+        z_expert  : [B, d_model]  — handcrafted feature embedding
+        h_nodes   : [total_nodes, node_emb_dim]  — pre-pooling GNN node embeddings
+        node_batch: [total_nodes]  — PyG batch assignment vector
+        Returns: z_final [B, 2*d_model], attn_1 [B,1,N], attn_2 [B,1,1]
         """
-        # Reshape for MHA: [batch × 1 × 128]
-        z_g = z_graph.unsqueeze(1)
-        z_e = z_expert.unsqueeze(1)
-        
-        # Direction 1: Q=graph, KV=expert
-        z_fused_1, attn_1 = self.cross_attn_1(
-            query=z_g, key=z_e, value=z_e
-        )
-        
-        # Direction 2: Q=expert, KV=graph
-        z_fused_2, attn_2 = self.cross_attn_2(
-            query=z_e, key=z_g, value=z_g
-        )
-        
-        # Concat + Fusion
-        z_concat = torch.cat([
-            z_fused_1.squeeze(1),   # [batch × 128]
-            z_fused_2.squeeze(1)    # [batch × 128]
-        ], dim=-1)                  # [batch × 256]
-        
-        z_final = self.fusion(z_concat)  # [batch × 256]
-        
-        return z_final, attn_1, attn_2
+        z_g = z_graph.unsqueeze(1)   # [B, 1, d_model]
+        z_e = z_expert.unsqueeze(1)  # [B, 1, d_model]
+
+        # Direction 1: Expert queries Graph nodes
+        h_padded, key_mask = self._pad_nodes(h_nodes, node_batch, z_graph.size(0))
+        z_fused_1, attn_1 = self.cross_attn_1(query=z_e, key=h_padded, value=h_padded,
+                                               key_padding_mask=key_mask)
+        # Direction 2: Graph queries Expert (kept for symmetry)
+        z_fused_2, attn_2 = self.cross_attn_2(query=z_g, key=z_e, value=z_e)
+
+        z_concat = torch.cat([z_fused_1.squeeze(1), z_fused_2.squeeze(1)], dim=-1)
+        return self.fusion(z_concat), attn_1, attn_2
 ```
 
 ---
@@ -407,7 +405,7 @@ Without scanpath geometry       ████████████████
 Without pupil dynamics          ██████████████████    84%   (-4%)
 Without saccade dynamics        █████████████████     83%   (-5%)
 Without delta features          ██████████████████    84%   (-4%)
-Without RINet visual            █████████████████     83%   (-5%)
+Without ResNet50 visual         █████████████████     83%   (-5%)
 ```
 
 ---

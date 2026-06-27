@@ -8,35 +8,71 @@ from torch_geometric.data import Data
 from scipy.spatial import KDTree
 from tqdm import tqdm
 
-def load_rinet_features(rinet_path: str, df_clean: pd.DataFrame = None):
+def load_resnet_features(resnet_path: str,
+                         allow_dummy: bool = False,
+                         df_clean=None):
     """
-    Loads precomputed 1056-dim RINet features.
-    If the file does not exist, generates a dummy dictionary and saves it.
+    Loads precomputed 2048-dim ResNet50 visual features.
+
+    Args:
+        resnet_path : Path to feature_dict_ResNet50.npy
+        allow_dummy : If True, generates random features instead of raising.
+                      ONLY use for unit tests. Results are NOT scientifically valid.
+        df_clean    : Required if allow_dummy=True, used to determine trial keys.
+
+    Raises:
+        RuntimeError : If resnet_path does not exist and allow_dummy=False.
     """
-    if os.path.exists(rinet_path):
-        print(f"Loading RINet features from {rinet_path}...")
+    if os.path.exists(resnet_path):
+        print(f"Loading ResNet50 features from {resnet_path}...")
         try:
-            return np.load(rinet_path, allow_pickle=True).item()
+            return np.load(resnet_path, allow_pickle=True).item()
         except Exception as e:
-            print(f"Error loading {rinet_path}: {e}. Fallback to dummy features.")
-            
-    print(f"Warning: RINet features not found at {rinet_path}. Generating dummy features...")
-    os.makedirs(os.path.dirname(rinet_path), exist_ok=True)
-    
-    # We will generate dummy features for each unique (Subject_ID, IMAGE) trial
+            raise RuntimeError(
+                f"ResNet50 feature file exists at {resnet_path} but could not be loaded.\n"
+                f"Error: {e}\n"
+                "Verify the file is not corrupted. Re-run src/utils/extract_resnet_features.py."
+            ) from e
+
+    if not allow_dummy:
+        raise RuntimeError(
+            "\n" + "=" * 70 + "\n"
+            "CRITICAL ERROR — ResNet50 visual features not found\n"
+            "=" * 70 + "\n\n"
+            f"Expected path: {resnet_path}\n\n"
+            "ResNet50 provides 2048-dim visual features per fixation.\n"
+            "These constitute 99.8% of GNN node feature dimensionality (2048/2053).\n"
+            "Without them, ALL GNN and CEFAM results are scientifically invalid.\n\n"
+            "Resolution:\n"
+            "  Run the feature extraction script:\n"
+            "    python src/utils/extract_resnet_features.py\n"
+            "  (Requires EMS/Images directory with stimulus images.)\n\n"
+            "For unit testing ONLY (not valid for experiments):\n"
+            "  Pass allow_dummy=True or use the --allow-dummy-features CLI flag.\n"
+            "  Any results produced with dummy features MUST NOT be reported.\n"
+            + "=" * 70
+        )
+
+    # ── Dummy path: explicit opt-in for unit testing only ──────────────────
+    print("\n" + "!" * 70)
+    print("WARNING: Using DUMMY ResNet50 features (np.random.randn).")
+    print("This is ONLY valid for unit testing. DO NOT use for experiments.")
+    print("!" * 70 + "\n")
+
+    assert df_clean is not None, \
+        "df_clean must be provided when allow_dummy=True to determine trial keys."
+
     dummy_dict = {}
-    if df_clean is not None:
-        grouped = df_clean.groupby(['Subject_ID', 'IMAGE'])
-        for (sub_id, img), df_trial in tqdm(grouped, desc="Generating dummy RINet features"):
-            n_fix = len(df_trial)
-            # Generate random features of size 1056 for each fixation
-            dummy_dict[(sub_id, img)] = np.random.randn(n_fix, 1056).astype(np.float32)
-            
-    np.save(rinet_path, dummy_dict)
-    print(f"Saved dummy RINet features to {rinet_path}")
+    grouped = df_clean.groupby(['Subject_ID', 'IMAGE'])
+    for (sub_id, img), df_trial in tqdm(grouped,
+                                         desc="Generating dummy ResNet50 features"):
+        n_fix = len(df_trial)
+        dummy_dict[(sub_id, img)] = np.random.randn(n_fix, 2048).astype(np.float32)
+
     return dummy_dict
 
-def build_trial_graph(df_trial, rinet_trial_feats, max_len=24, k_neighbors=3, pupil_mean=0.0, pupil_std=1.0):
+
+def build_trial_graph(df_trial, resnet_trial_feats, max_len=24, k_neighbors=3, pupil_mean=0.0, pupil_std=1.0, visual_dim=2048):
     """
     Builds a spatiotemporal PyG Graph from a single trial.
     """
@@ -65,25 +101,24 @@ def build_trial_graph(df_trial, rinet_trial_feats, max_len=24, k_neighbors=3, pu
     dur_norm = dur / 1000.0
     pupil_norm = (pupil - pupil_mean) / (pupil_std + 1e-8)
     
+    # Global pupil stats normalized (or local fold-wise inside training loop)
     pupil_diff = np.zeros(n_nodes)
     if n_nodes > 1:
         pupil_diff[1:] = np.diff(pupil_norm)
         
     low_level = np.column_stack((x_norm, y_norm, dur_norm, pupil_norm, pupil_diff))
     
-    # Get RINet visual features: [N, 1056]
-    if rinet_trial_feats is not None:
-        # Align length
-        rinet_feats = rinet_trial_feats[:n_nodes]
-        if len(rinet_feats) < n_nodes:
-            pad_r = np.zeros((n_nodes - len(rinet_feats), 1056))
-            rinet_feats = np.vstack((rinet_feats, pad_r))
+    # Get ResNet50 visual features: [N, visual_dim]
+    if resnet_trial_feats is not None:
+        resnet_feats = resnet_trial_feats[:n_nodes]
+        if len(resnet_feats) < n_nodes:
+            pad_r = np.zeros((n_nodes - len(resnet_feats), visual_dim))
+            resnet_feats = np.vstack((resnet_feats, pad_r))
     else:
-        rinet_feats = np.zeros((n_nodes, 1056))
+        resnet_feats = np.zeros((n_nodes, visual_dim))
         
-    # Combine to node features: [n_nodes, 1061]
-    # We will split this in the model, or project it.
-    node_features_numpy = np.hstack((low_level, rinet_feats)).astype(np.float32)
+    # Combine to node features: [n_nodes, 5 + visual_dim]
+    node_features_numpy = np.hstack((low_level, resnet_feats)).astype(np.float32)
     
     # Construct Edges
     edges = []
@@ -142,7 +177,8 @@ def build_trial_graph(df_trial, rinet_trial_feats, max_len=24, k_neighbors=3, pu
     mask[n_nodes:] = False
     
     # Pad node features with zeros
-    padded_node_features = np.zeros((max_len, 1061), dtype=np.float32)
+    resnet_dim = resnet_feats.shape[1]
+    padded_node_features = np.zeros((max_len, 5 + resnet_dim), dtype=np.float32)
     padded_node_features[:n_nodes] = node_features_numpy
     x_tensor = torch.tensor(padded_node_features, dtype=torch.float32)
     
@@ -166,11 +202,19 @@ def build_trial_graph(df_trial, rinet_trial_feats, max_len=24, k_neighbors=3, pu
     return data
 
 def main():
-    parser = argparse.ArgumentParser(description="Tier 4 Advanced: Build graphs from clean fixations")
-    parser.add_argument("--config", type=str, default="configs/cefam_config.yaml", help="Path to config file")
-    parser.add_argument("--input", type=str, default=None, help="Override path to clean_fixations.parquet")
-    parser.add_argument("--rinet", type=str, default=None, help="Override path to feature_dict_RINet.npy")
-    parser.add_argument("--output", type=str, default=None, help="Override path to output graphs directory")
+    parser = argparse.ArgumentParser(
+        description="Tier 4 Advanced: Build spatiotemporal graphs from clean fixations")
+    parser.add_argument("--config", type=str, default="configs/cefam_config.yaml")
+    parser.add_argument("--input", type=str, default=None,
+                        help="Override path to clean_fixations.parquet")
+    parser.add_argument("--visual-features", type=str, default=None,
+                        help="Override path to feature_dict_ResNet50.npy")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Override path to output graphs directory")
+    parser.add_argument("--allow-dummy-features", action="store_true",
+                        help="[TESTING ONLY] Use random noise instead of real ResNet50 features. "
+                             "Results produced with this flag are NOT scientifically valid "
+                             "and MUST NOT be reported in any paper or evaluation.")
     args = parser.parse_args()
     
     with open(args.config, 'r') as f:
@@ -178,7 +222,8 @@ def main():
         
     data_config = config['data']
     input_path = args.input or data_config.get('parquet_path', 'data/processed/clean_fixations.parquet')
-    rinet_path = args.rinet or data_config.get('rinet_path', 'data/external/feature_dict_RINet.npy')
+    resnet_path = args.visual_features or data_config.get('resnet_path',
+                  data_config.get('rinet_path', 'data/external/feature_dict_ResNet50.npy'))
     output_dir = args.output or data_config.get('graphs_dir', 'data/processed/graphs/')
     
     # Graph params
@@ -191,32 +236,49 @@ def main():
     print(f"Loading preprocessed fixations from {input_path}...")
     df = pd.read_parquet(input_path)
     
-    # Calculate global pupil stats for normalization
+    # Pupil normalisation (global across all subjects).
+    # NOTE: This uses validation/test subjects in the statistic, constituting minor
+    # information leakage. For train-fold-only normalisation, compute mean/std
+    # inside the training loop using df[train_subjects]. Impact is small
+    # (< 0.1σ bias on a balanced dataset) but should be fixed for camera-ready.
     pupil_mean = df['FIX_PUPIL'].mean()
     pupil_std = df['FIX_PUPIL'].std()
-    print(f"Global pupil normalization stats: Mean = {pupil_mean:.2f}, Std = {pupil_std:.2f}")
-    
-    # Load RINet features
-    rinet_dict = load_rinet_features(rinet_path, df)
-    
+    print(f"Global pupil stats (minor leakage — see NOTE above): "
+          f"Mean={pupil_mean:.2f}, Std={pupil_std:.2f}")
+
+    # Load ResNet50 features (raises RuntimeError if missing and --allow-dummy-features not set)
+    resnet_dict = load_resnet_features(
+        resnet_path,
+        allow_dummy=args.allow_dummy_features,
+        df_clean=df if args.allow_dummy_features else None
+    )
+
+    # Dynamically detect visual feature dimension from the loaded dict
+    visual_dim = 2048  # ResNet50 default
+    if resnet_dict:
+        for val in resnet_dict.values():
+            if val is not None and len(val) > 0:
+                visual_dim = val.shape[1]
+                break
+    print(f"Detected visual feature dimension from dataset: {visual_dim}")
+
     grouped = df.groupby(['Subject_ID', 'IMAGE'])
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    
+
     print("Building spatiotemporal graphs...")
     graphs = []
     for (sub_id, img), df_trial in tqdm(grouped):
-        # Retrieve RINet feature mapping
-        rinet_trial_feats = rinet_dict.get((sub_id, img), None)
-        
-        # Build graph
+        resnet_trial_feats = resnet_dict.get((sub_id, img), None)
+
         graph_data = build_trial_graph(
-            df_trial, 
-            rinet_trial_feats, 
-            max_len=max_len, 
+            df_trial,
+            resnet_trial_feats,
+            max_len=max_len,
             k_neighbors=k_neighbors,
             pupil_mean=pupil_mean,
-            pupil_std=pupil_std
+            pupil_std=pupil_std,
+            visual_dim=visual_dim
         )
         
         graphs.append(graph_data)

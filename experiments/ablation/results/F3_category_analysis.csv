@@ -1,21 +1,21 @@
 model,category,auc
-GNN+CEFAM (Full Hybrid),Social,0.8984375
-GNN+CEFAM (Full Hybrid),Manipulated,0.9121874999999999
-GNN+CEFAM (Full Hybrid),Natural,0.9028125
-GNN+CEFAM (Full Hybrid),Synthetic,0.90375
-GNN+CEFAM (Full Hybrid),Overall (aggregated),0.91125
-ST-GNN (GNN Only),Social,0.63234375
-ST-GNN (GNN Only),Manipulated,0.628125
-ST-GNN (GNN Only),Natural,0.64796875
-ST-GNN (GNN Only),Synthetic,0.6515624999999999
-ST-GNN (GNN Only),Overall (aggregated),0.6496875
-BiCA-HS (Transformer),Social,0.95078125
-BiCA-HS (Transformer),Manipulated,0.948125
-BiCA-HS (Transformer),Natural,0.9484375
-BiCA-HS (Transformer),Synthetic,0.94765625
-BiCA-HS (Transformer),Overall (aggregated),0.94984375
-XGBoost (Tabular Only),Social,0.87046875
-XGBoost (Tabular Only),Manipulated,0.8735937500000001
-XGBoost (Tabular Only),Natural,0.8775000000000001
-XGBoost (Tabular Only),Synthetic,0.8623437500000001
-XGBoost (Tabular Only),Overall (aggregated),0.878125
+GNN+CEFAM (Full Hybrid),Social,0.9390625
+GNN+CEFAM (Full Hybrid),Manipulated,0.9410937500000001
+GNN+CEFAM (Full Hybrid),Natural,0.9409375
+GNN+CEFAM (Full Hybrid),Synthetic,0.9340624999999999
+GNN+CEFAM (Full Hybrid),Overall (aggregated),0.94046875
+ST-GNN (GNN Only),Social,0.9232812499999999
+ST-GNN (GNN Only),Manipulated,0.92390625
+ST-GNN (GNN Only),Natural,0.9296875
+ST-GNN (GNN Only),Synthetic,0.931875
+ST-GNN (GNN Only),Overall (aggregated),0.9309375
+BiCA-HS (Transformer),Social,0.95234375
+BiCA-HS (Transformer),Manipulated,0.95234375
+BiCA-HS (Transformer),Natural,0.95125
+BiCA-HS (Transformer),Synthetic,0.9450000000000001
+BiCA-HS (Transformer),Overall (aggregated),0.9521875000000001
+XGBoost (Tabular Only),Social,0.8704687500000001
+XGBoost (Tabular Only),Manipulated,0.87015625
+XGBoost (Tabular Only),Natural,0.87015625
+XGBoost (Tabular Only),Synthetic,0.8709375000000001
+XGBoost (Tabular Only),Overall (aggregated),0.87015625

@@ -12,12 +12,12 @@
         "auc": 0.8854
     },
     "key_findings": [
-        "Best model: BiCA-HS (Transformer) with AUC=0.9498, ACC=0.9125",
-        "CEFAM Fusion + Handcrafted Stream: dAUC=+0.2616, dACC=+0.2188",
-        "GNN Stream (Graph Topology): dAUC=+0.0331, dACC=+0.0375",
-        "Transformer Encoder (vs GAT): dAUC=+0.0386, dACC=+0.0750",
-        "Full BiCA-HS vs GNN Standalone: dAUC=+0.3002, dACC=+0.2937",
-        "Most stable model: GNN+CEFAM (Full Hybrid) (CV_AUC=0.0336)"
+        "Best model: BiCA-HS (Transformer) with AUC=0.9522, ACC=0.9062",
+        "CEFAM Fusion + Handcrafted Stream: dAUC=+0.0095, dACC=+0.0125",
+        "GNN Stream (Graph Topology): dAUC=+0.0703, dACC=+0.0687",
+        "Transformer Encoder (vs GAT): dAUC=+0.0117, dACC=+0.0312",
+        "Full BiCA-HS vs GNN Standalone: dAUC=+0.0213, dACC=+0.0437",
+        "Most stable model: GNN+CEFAM (Full Hybrid) (CV_AUC=0.0321)"
     ],
     "files_generated": [
         "F1_model_comparison.csv",

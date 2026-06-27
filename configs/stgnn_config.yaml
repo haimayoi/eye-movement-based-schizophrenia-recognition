@@ -18,8 +18,8 @@ model:
     residual: true
     edge_dim: 2
 
-  rinet_projector:
-    input_dim: 1056
+  resnet_projector:
+    input_dim: 2048
     hidden_dim: 256
     output_dim: 64
     dropout: 0.3
@@ -38,7 +38,7 @@ model:
 data:
   parquet_path: "data/processed/clean_fixations.parquet"
   graphs_dir: "data/processed/graphs/"
-  rinet_path: "data/external/feature_dict_RINet.npy"
+  resnet_path: "data/external/feature_dict_ResNet50.npy"
 
   screen:
     width: 1024
@@ -55,7 +55,7 @@ data:
 
   node_features:
     low_level: [x_norm, y_norm, duration_norm, pupil_size, pupil_diff]
-    rinet_projected_dim: 64
+    resnet_projected_dim: 64
     total_dim: 69
 
   edge_features: [saccade_amplitude, saccade_angle]
