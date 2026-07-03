@@ -543,8 +543,19 @@ def main():
             m.load_state_dict(torch.load(ckpt, map_location=device))
             m.eval()
 
+            # Compute fold-specific pupil statistics using train subjects of this fold
+            train_subjects = [s_id for s_id, f in subject_to_fold.items() if f != fold]
+            df_train_pupil = df_clean[df_clean['Subject_ID'].isin(train_subjects)]
+            fold_pupil_mean = df_train_pupil['FIX_PUPIL'].mean()
+            fold_pupil_std = df_train_pupil['FIX_PUPIL'].std()
+            
+            # Renormalize test graphs dynamically using fold statistics to match model training distribution
+            fold_test_graphs = renormalize_graphs_pupil(
+                test_graphs, global_pupil_mean, global_pupil_std, fold_pupil_mean, fold_pupil_std
+            )
+            
             test_loader = DataLoader(
-                test_graphs, batch_size=batch_size, shuffle=False)
+                fold_test_graphs, batch_size=batch_size, shuffle=False)
             fold_subj_preds = []
 
             with torch.no_grad():

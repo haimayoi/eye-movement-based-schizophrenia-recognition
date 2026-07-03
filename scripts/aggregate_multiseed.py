@@ -24,6 +24,11 @@ MODELS = {
         123: "results/baselines_s123/catboost_oof_subject_preds.csv",
         456: "results/baselines_s456/catboost_oof_subject_preds.csv",
     },
+    "ST-GNN": {
+        42:  "results/stgnn_s42/stgnn_oof_subject_preds.csv",
+        123: "results/stgnn_s123/stgnn_oof_subject_preds.csv",
+        456: "results/stgnn_s456/stgnn_oof_subject_preds.csv",
+    },
     "GNN-CEFAM": {
         42:  "results/cefam_s42/cefam_oof_subject_preds.csv",
         123: "results/cefam_s123/cefam_oof_subject_preds.csv",
@@ -34,10 +39,15 @@ MODELS = {
         123: "results/bica_s123/bica_subject_val_predictions.csv",
         456: "results/bica_s456/bica_subject_val_predictions.csv",
     },
-    "Tier5 (CatBoost+BiCA)": {
-        42:  "results/tier5_s42/tier5_results_summary.json",
-        123: "results/tier5_s123/tier5_results_summary.json",
-        456: "results/tier5_s456/tier5_results_summary.json",
+    "Tier5 (Ensemble+CEFAM)": {
+        42:  "results/tier5_cefam_s42/tier5_results_summary.json",
+        123: "results/tier5_cefam_s123/tier5_results_summary.json",
+        456: "results/tier5_cefam_s456/tier5_results_summary.json",
+    },
+    "Tier5 (Ensemble+BiCA-HS)": {
+        42:  "results/tier5_bica_s42/tier5_results_summary.json",
+        123: "results/tier5_bica_s123/tier5_results_summary.json",
+        456: "results/tier5_bica_s456/tier5_results_summary.json",
     },
 }
 
@@ -53,11 +63,15 @@ def compute_metrics_csv(path):
     if len(np.unique(y)) < 2:
         return None
     pred = (p >= 0.5).astype(int)
+    from sklearn.metrics import confusion_matrix
+    tn, fp, fn, tp = confusion_matrix(y, pred, labels=[0, 1]).ravel()
+    spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
     return {
         "auc":  roc_auc_score(y, p),
         "acc":  accuracy_score(y, pred),
         "f1":   f1_score(y, pred),
         "sens": recall_score(y, pred),
+        "spec": spec,
     }
 
 
@@ -74,6 +88,7 @@ def compute_metrics_json(path):
         "acc":  m.get("accuracy", m.get("acc", float("nan"))),
         "f1":   m.get("f1", float("nan")),
         "sens": m.get("recall", m.get("sensitivity", float("nan"))),
+        "spec": m.get("specificity", m.get("spec", float("nan"))),
     }
 
 
@@ -83,9 +98,9 @@ def compute_metrics(path):
     return compute_metrics_csv(path)
 
 
-print("=" * 82)
-print(f"{'Model':<26} {'AUC':>16} {'ACC':>16} {'F1':>16} {'Sens':>16}")
-print("=" * 82)
+print("=" * 98)
+print(f"{'Model':<26} {'AUC':>16} {'ACC':>16} {'F1':>16} {'Sens':>16} {'Spec':>16}")
+print("=" * 98)
 
 all_results = {}
 for model_name, paths in MODELS.items():
@@ -113,13 +128,13 @@ for model_name, paths in MODELS.items():
         return f"{mean:.4f}±{std:.4f}{tag}"
 
     print(f"{model_name:<26} {fmt('auc'):>16} {fmt('acc'):>16} "
-          f"{fmt('f1'):>16} {fmt('sens'):>16}")
+          f"{fmt('f1'):>16} {fmt('sens'):>16} {fmt('spec'):>16}")
     if missing:
         print(f"  ⚠ Missing seeds: {missing} — partial result")
 
-print("=" * 82)
+print("=" * 98)
 print(f"{'SOTA (MSNet 2025)':<26} {'0.8854':>16} {'0.8125':>16}")
-print("=" * 82)
+print("=" * 98)
 
 # Per-seed breakdown
 print("\n--- Per-seed AUC ---")

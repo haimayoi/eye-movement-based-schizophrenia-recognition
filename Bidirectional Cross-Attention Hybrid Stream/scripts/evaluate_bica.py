@@ -12,9 +12,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from src.tier3_tabular.group_kfold import get_subject_folds
 from src.models.bica.model import BiCAHSModel
+from scripts.train_tier4 import build_flat_features_dict
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def calculate_metrics(y_true, y_pred_proba):
     y_pred = (y_pred_proba >= 0.5).astype(int)
+    
     auc = roc_auc_score(y_true, y_pred_proba) if len(np.unique(y_true)) > 1 else 0.5
     acc = accuracy_score(y_true, y_pred)
     prec = precision_score(y_true, y_pred, zero_division=0)
@@ -33,19 +44,40 @@ def calculate_metrics(y_true, y_pred_proba):
         "specificity": spec
     }
 
+def renormalize_bica_trials(trials, global_mean, global_std, fold_mean, fold_std):
+    """
+    Renormalizes pupil features in BiCA trials fold-wise to prevent global normalisation leakage.
+    t['seq'] column 4: pupil size.
+    """
+    renormalized = []
+    for t in trials:
+        t_new = t.copy()
+        seq = t_new['seq'].copy()
+        mask = t_new['mask']
+        
+        # Backproject globally normalized pupil (column 4) to raw, and normalize with fold stats
+        pupil_global = seq[:, 4]
+        pupil_fold = (pupil_global * (global_std / (fold_std + 1e-8))) + ((global_mean - fold_mean) / (fold_std + 1e-8))
+        
+        # Zero out padding elements
+        pupil_fold[~mask] = 0.0
+        seq[:, 4] = pupil_fold
+        t_new['seq'] = seq
+        renormalized.append(t_new)
+    return renormalized
+
 class BiCADataset(Dataset):
-    def __init__(self, df_fixations, df_stim, feature_cols, max_seq_len=200, pupil_mean=0.0, pupil_std=1.0):
+    """
+    Sequence dataset for BiCA-HS.
+    """
+    def __init__(self, df_fixations, flat_features_dict, max_seq_len=200, pupil_mean=0.0, pupil_std=1.0):
         self.max_seq_len = max_seq_len
-        self.feature_cols = feature_cols
+        
+        # Group fixations by Subject_ID and IMAGE (Stimulus_ID)
         self.trials = []
         grouped = df_fixations.groupby(['Subject_ID', 'IMAGE'])
         
-        flat_features_dict = {}
-        for _, row in df_stim.iterrows():
-            s_id = int(row['Subject_ID'])
-            stim_id = row['Stimulus_ID']
-            flat_features_dict[(s_id, stim_id)] = row[feature_cols].values.astype(np.float32)
-            
+
         for (sub_id, img), df_trial in grouped:
             key = (int(sub_id), img)
             if key not in flat_features_dict:
@@ -125,6 +157,7 @@ def main():
     df_fixations = pd.read_parquet(parquet_path)
     
     features_path = data_config.get('features_stimulus_path', 'data/processed/features_stimulus_level.csv')
+    features_subject_path = data_config.get('features_subject_path', 'data/processed/features_subject_level.csv')
     df_stim = pd.read_csv(features_path)
     
     categories_path = data_config.get('categories_path', 'data/metadata/stimulus_categories.csv')
@@ -134,16 +167,22 @@ def main():
     meta_cols = ['Subject_ID', 'Stimulus_ID', 'Label', 'Is_Test']
     feature_cols = [col for col in df_stim.columns if col not in meta_cols]
     
-    pupil_mean = df_fixations['FIX_PUPIL'].mean()
-    pupil_std = df_fixations['FIX_PUPIL'].std()
+    flat_features_dict, handcrafted_dim, delta_cols = build_flat_features_dict(
+        df_stim, feature_cols, features_subject_path
+    )
+    print(f"Handcrafted feature dimension: {handcrafted_dim} "
+          f"({len(feature_cols)} stimulus + {len(delta_cols)} delta)")
+    
+    # Calculate global pupil stats for normalization
+    global_pupil_mean = df_fixations['FIX_PUPIL'].mean()
+    global_pupil_std = df_fixations['FIX_PUPIL'].std()
     
     full_dataset = BiCADataset(
         df_fixations=df_fixations,
-        df_stim=df_stim,
-        feature_cols=feature_cols,
+        flat_features_dict=flat_features_dict,
         max_seq_len=data_config.get('max_seq_len', 200),
-        pupil_mean=pupil_mean,
-        pupil_std=pupil_std
+        pupil_mean=global_pupil_mean,
+        pupil_std=global_pupil_std
     )
     
     cv_path = os.path.join(data_config.get('raw_dir', 'EMS'), "Train_Valid.xlsx")
@@ -183,9 +222,20 @@ def main():
     for fold in range(cv_folds):
         print(f"Evaluating Fold {fold}...")
         val_list = [t for t in train_valid_trials if subject_to_fold[t['subject_id']] == fold]
-        val_loader = DataLoader(CustomDataset(val_list), batch_size=16, shuffle=False)
         
-        d_bio = len(feature_cols)
+        # Compute fold-specific pupil statistics using train subjects of this fold
+        train_subjects = [s_id for s_id, f in subject_to_fold.items() if f != fold]
+        df_train_pupil = df_fixations[df_fixations['Subject_ID'].isin(train_subjects)]
+        fold_pupil_mean = df_train_pupil['FIX_PUPIL'].mean()
+        fold_pupil_std = df_train_pupil['FIX_PUPIL'].std()
+        
+        # Renormalize val list dynamically using fold statistics to match fold checkpoint
+        fold_val_list = renormalize_bica_trials(
+            val_list, global_pupil_mean, global_pupil_std, fold_pupil_mean, fold_pupil_std)
+        
+        val_loader = DataLoader(CustomDataset(fold_val_list), batch_size=16, shuffle=False)
+        
+        d_bio = handcrafted_dim
         model = BiCAHSModel(d_bio=d_bio, config=config).to(device)
         
         checkpoint_path = os.path.join(checkpoint_dir, f"bica_fold_{fold}_best.pt")

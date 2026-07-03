@@ -1,0 +1,14 @@
+\section{Related Work}
+\label{sec:related_work}
+
+\subsection{Clinical Eye Movement Biomarkers}
+Abnormal eye movements under free-viewing conditions are among the most replicated findings in biological psychiatry, reflecting underlying frontal-striatal-cerebellar cognitive dysfunctions \cite{holzman1973}. Benson et al.\ \cite{benson2012} demonstrated that simple free-viewing tests can classify schizophrenia with high accuracy using restricted exploration metrics, while Morita et al.\ \cite{morita2020} reviewed the pathophysiology linking saccadic hypometria and reduced scanpath complexity to psychotic symptom severity.
+
+\subsection{Handcrafted Feature Methods}
+Early machine learning classifiers applied SVMs or random forests on static, aggregated eye-tracking metrics such as fixation count, saccade amplitude, and center-bias \cite{shpigelman2008}. Tseng et al.\ \cite{tseng2013} showed that high-throughput classification across multiple clinical populations is achievable from natural viewing. Huang et al.\ \cite{huang2020} introduced discriminative eye movement features combining duration statistics with model-metric descriptors. However, these approaches collapse the spatiotemporal structure of scanpaths and discard sequential dependencies.
+
+\subsection{Deep Scanpath Models}
+To capture spatial structures and temporal sequences, deep learning methods have been explored. Recurrent neural networks process raw trajectories but fail to represent non-Euclidean spatial relationships \cite{kasprowski2020}. Song et al.\ \cite{song2025} proposed MSNet on the EMS dataset, using multi-scale CNNs applied to gaze density maps, achieving the current state-of-the-art AUC\,=\,0.8854; however, density-map representations lose temporal ordering and individual fixation interpretability. In parallel, scanpaths have been modeled as spatiotemporal graphs processed by Graph Attention Networks (GAT) \cite{velickovic2018, birawo2024} and as sequence trajectories processed by Transformers \cite{vaswani2017}. Gradient-boosted tree ensembles such as XGBoost \cite{chen2016xgboost}, LightGBM \cite{ke2017lightgbm}, and CatBoost \cite{prokhorenkova2018catboost} offer strong tabular baselines when combined with rich feature engineering.
+
+\subsection{Cross-Attention Fusion}
+Fusing heterogeneous feature streams via cross-attention has shown promise in multimodal learning. Naive implementations that unsqueeze both streams to sequence length 1 produce degenerate softmax distributions (value $\equiv$ 1.0) that provide no learning signal. Our CEFAM addresses this by performing genuine cross-attention between the expert embedding and the \textit{pre-pooling} fixation node sequence $H_\text{nodes} \in \mathbb{R}^{N \times 256}$.

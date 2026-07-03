@@ -1,0 +1,1859 @@
+﻿Total cells: 52
+=== Cell 1 (code) ===
+from google.colab import drive
+drive.mount('/content/drive')
+
+%cd "/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition"
+
+=== Cell 2 (code) ===
+# ΓöÇΓöÇ Global Setup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+import os, sys, json, warnings
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import seaborn as sns
+from pathlib import Path
+
+warnings.filterwarnings('ignore')
+plt.rcParams.update({'figure.dpi': 120, 'font.size': 11,
+                     'axes.titlesize': 13, 'axes.labelsize': 11,
+                     'axes.spines.top': False, 'axes.spines.right': False})
+sns.set_palette('Set2')
+
+# X├íc ─æß╗ïnh PROJECT_ROOT tß╗▒ ─æß╗Öng dß╗▒a tr├¬n m├┤i tr╞░ß╗¥ng chß║íy
+if 'google.colab' in sys.modules or os.path.exists('/content/drive'):
+    try:
+        from google.colab import drive
+        drive.mount('/content/drive', force_remount=True)
+    except:
+        pass
+    PROJECT_ROOT = Path('/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition')
+else:
+    # Nß║┐u chß║íy local
+    PROJECT_ROOT = Path(os.getcwd())
+
+sys.path.insert(0, str(PROJECT_ROOT))
+
+SEED = 42
+np.random.seed(SEED)
+
+COLOR_HC   = '#2196F3'
+COLOR_SZ   = '#F44336'
+COLOR_T3   = '#4CAF50'
+COLOR_T4   = '#FF9800'
+COLOR_T5   = '#9C27B0'
+COLOR_SOTA = '#607D8B'
+
+print('Γ£à Setup ho├án tß║Ñt ΓÇö PROJECT_ROOT:', PROJECT_ROOT)
+
+
+=== Cell 3 (code) ===
+# ΓöÇΓöÇ C├ái th╞░ viß╗çn cß║ºn thiß║┐t (nß║┐u ch╞░a c├│ tr├¬n Colab) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+!pip install -q xgboost lightgbm shap pyarrow openpyxl
+print('Γ£à Packages sß║╡n s├áng.')
+
+=== Cell 4 (code) ===
+# ΓöÇΓöÇ C├ái th╞░ viß╗çn cß║ºn thiß║┐t (nß║┐u ch╞░a c├│) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+!pip install xgboost lightgbm catboost optuna torch-geometric
+
+=== Cell 6 (code) ===
+# ΓöÇΓöÇ 1A. Load dß╗» liß╗çu th├┤ (raw .xlsx) v├á dß╗» liß╗çu ─æ├ú lß╗ìc (parquet) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+import glob
+
+RAW_DIR = PROJECT_ROOT / 'EMS' / 'Train_Valid' / 'Fixations'
+PARQUET  = PROJECT_ROOT / 'data' / 'processed' / 'clean_fixations.parquet'
+
+# ─Éß╗ìc CV split ─æß╗â biß║┐t subject ΓåÆ label mapping
+cv_split = pd.read_excel(PROJECT_ROOT / 'EMS' / 'Train_Valid.xlsx')
+all_train_ids = sorted(pd.concat([cv_split[c] for c in cv_split.columns]).dropna().astype(int).unique())
+
+# Sample 60 subject files ─æß╗â ─æß║íi diß╗çn cho to├án bß╗Ö dataset (30 HC + 30 SZ)
+# Quy ╞░ß╗¢c ─æß║╖t t├¬n EMS: 000ΓÇô103 = SZ, 104ΓÇô207 = HC (theo README EMS)
+raw_files = sorted(glob.glob(str(RAW_DIR / '*.xlsx')))
+sample_files = raw_files[:60]  # 60 subjects ─æß║ºu
+
+dfs_raw = []
+for f in sample_files:
+    sid = int(Path(f).stem)
+    label = 1 if sid < 104 else 0  # SZ=1, HC=0
+    tmp = pd.read_excel(f)
+    tmp['Subject_ID'] = sid
+    tmp['Label'] = label
+    dfs_raw.append(tmp)
+df_raw = pd.concat(dfs_raw, ignore_index=True)
+
+# Dß╗» liß╗çu ─æ├ú qua filter
+df_clean = pd.read_parquet(PARQUET)
+df_clean_train = df_clean[(df_clean['Is_Test'] == 0) & (df_clean['Label'].isin([0,1]))].copy()
+
+print(f'Dß╗» liß╗çu th├┤  (60 subjects sample): {len(df_raw):,} fixations')
+print(f'Dß╗» liß╗çu sß║ích (train, full dataset): {len(df_clean_train):,} fixations')
+print(f'Tß╗╖ lß╗ç loß║íi bß╗Å ╞░ß╗¢c t├¡nh:            {(1 - len(df_clean_train)/len(df_clean)*1.0):.1%} (tr├¬n to├án dataset)')
+
+=== Cell 7 (code) ===
+# ΓöÇΓöÇ 1B. Spatial Filter Visualization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+SCREEN_W, SCREEN_H = 1024, 768
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+fig.suptitle('Tier 1 ΓÇö Spatial Filter: FIX_X & FIX_Y tr╞░ß╗¢c vs. sau lß╗ìc', fontsize=15, fontweight='bold')
+
+# M├áu ─æß╗Å cho v├╣ng bß╗ï loß║íi bß╗Å
+def shade_rejected(ax, axis='x'):
+    if axis == 'x':
+        ax.axvspan(ax.get_xlim()[0], 0, color='#FFCDD2', alpha=0.6, label='Bß╗ï loß║íi (< 0)')
+        ax.axvspan(SCREEN_W, ax.get_xlim()[1], color='#FFCDD2', alpha=0.6, label='Bß╗ï loß║íi (ΓëÑ 1024)')
+    else:
+        ax.axvspan(ax.get_xlim()[0], 0, color='#FFCDD2', alpha=0.6, label='Bß╗ï loß║íi (< 0)')
+        ax.axvspan(SCREEN_H, ax.get_xlim()[1], color='#FFCDD2', alpha=0.6, label='Bß╗ï loß║íi (ΓëÑ 768)')
+
+# FIX_X ΓÇö tr╞░ß╗¢c
+ax = axes[0, 0]
+ax.hist(df_raw['FIX_X'], bins=80, color='#90A4AE', edgecolor='none', alpha=0.85)
+ax.axvline(0, color='red', lw=1.5, ls='--')
+ax.axvline(SCREEN_W, color='red', lw=1.5, ls='--', label='Bi├¬n lß╗ìc [0, 1024)')
+ax.set_xlim(-150, 1200)
+shade_rejected(ax, 'x')
+ax.set_title('FIX_X ΓÇö Tr╞░ß╗¢c khi lß╗ìc (raw)')
+ax.set_xlabel('FIX_X (pixels)')
+ax.set_ylabel('Sß╗æ l╞░ß╗úng fixation')
+ax.legend(fontsize=8)
+
+# FIX_X ΓÇö sau
+ax = axes[0, 1]
+ax.hist(df_clean_train['FIX_X'], bins=80, color=COLOR_HC, edgecolor='none', alpha=0.85)
+ax.axvline(0, color='red', lw=1.5, ls='--')
+ax.axvline(SCREEN_W, color='red', lw=1.5, ls='--', label='Bi├¬n lß╗ìc [0, 1024)')
+ax.set_xlim(-150, 1200)
+ax.set_title('FIX_X ΓÇö Sau khi lß╗ìc (clean parquet)')
+ax.set_xlabel('FIX_X (pixels)')
+ax.set_ylabel('Sß╗æ l╞░ß╗úng fixation')
+ax.legend(fontsize=8)
+
+# FIX_Y ΓÇö tr╞░ß╗¢c
+ax = axes[1, 0]
+ax.hist(df_raw['FIX_Y'], bins=80, color='#90A4AE', edgecolor='none', alpha=0.85)
+ax.axvline(0, color='red', lw=1.5, ls='--')
+ax.axvline(SCREEN_H, color='red', lw=1.5, ls='--', label='Bi├¬n lß╗ìc [0, 768)')
+ax.set_xlim(-100, 900)
+shade_rejected(ax, 'y')
+ax.set_title('FIX_Y ΓÇö Tr╞░ß╗¢c khi lß╗ìc (raw)')
+ax.set_xlabel('FIX_Y (pixels)')
+ax.set_ylabel('Sß╗æ l╞░ß╗úng fixation')
+ax.legend(fontsize=8)
+
+# FIX_Y ΓÇö sau
+ax = axes[1, 1]
+ax.hist(df_clean_train['FIX_Y'], bins=80, color=COLOR_SZ, edgecolor='none', alpha=0.85)
+ax.axvline(0, color='red', lw=1.5, ls='--')
+ax.axvline(SCREEN_H, color='red', lw=1.5, ls='--', label='Bi├¬n lß╗ìc [0, 768)')
+ax.set_xlim(-100, 900)
+ax.set_title('FIX_Y ΓÇö Sau khi lß╗ìc (clean parquet)')
+ax.set_xlabel('FIX_Y (pixels)')
+ax.set_ylabel('Sß╗æ l╞░ß╗úng fixation')
+ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier1_spatial_filter.png', bbox_inches='tight')
+plt.show()
+
+# T├¡nh tß╗╖ lß╗ç loß║íi bß╗Å trong sample
+n_out_x = ((df_raw['FIX_X'] < 0) | (df_raw['FIX_X'] >= SCREEN_W)).sum()
+n_out_y = ((df_raw['FIX_Y'] < 0) | (df_raw['FIX_Y'] >= SCREEN_H)).sum()
+n_out_both = ((df_raw['FIX_X'] < 0) | (df_raw['FIX_X'] >= SCREEN_W) |
+              (df_raw['FIX_Y'] < 0) | (df_raw['FIX_Y'] >= SCREEN_H)).sum()
+print(f'FIX_X ngo├ái bi├¬n: {n_out_x:,} ({n_out_x/len(df_raw):.2%})')
+print(f'FIX_Y ngo├ái bi├¬n: {n_out_y:,} ({n_out_y/len(df_raw):.2%})')
+print(f'Tß╗òng bß╗ï loß║íi (spatial): {n_out_both:,} ({n_out_both/len(df_raw):.2%})')
+
+=== Cell 8 (code) ===
+# ΓöÇΓöÇ 1C. Temporal Filter ΓÇö FIX_DURATION Distribution ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+DURATION_THRESH = 50  # ms
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+fig.suptitle('Tier 1 ΓÇö Temporal Filter: FIX_DURATION < 50 ms (nhiß╗àu kß╗╣ thuß║¡t)', fontsize=14, fontweight='bold')
+
+for ax, df, title in zip(
+    axes,
+    [df_raw, df_clean_train],
+    ['Tr╞░ß╗¢c lß╗ìc (raw ΓÇö 60 subjects sample)', 'Sau lß╗ìc (clean parquet ΓÇö train set)']
+):
+    bins = np.linspace(0, 800, 60)
+    counts, edges = np.histogram(df['FIX_DURATION'], bins=bins)
+
+    # T├┤ m├áu ─æß╗Å v├╣ng < 50ms
+    reject_mask = edges[:-1] < DURATION_THRESH
+    ax.bar(edges[:-1][reject_mask], counts[reject_mask],
+           width=np.diff(edges)[0], color='#EF9A9A', align='edge',
+           label=f'Nhiß╗àu kß╗╣ thuß║¡t (< {DURATION_THRESH} ms)')
+    ax.bar(edges[:-1][~reject_mask], counts[~reject_mask],
+           width=np.diff(edges)[0], color='#42A5F5', align='edge',
+           label='Fixation hß╗úp lß╗ç')
+    ax.axvline(DURATION_THRESH, color='red', lw=2, ls='--', label=f'Ng╞░ß╗íng = {DURATION_THRESH} ms')
+    ax.set_title(title)
+    ax.set_xlabel('FIX_DURATION (ms)')
+    ax.set_ylabel('Sß╗æ l╞░ß╗úng fixation')
+    ax.legend(fontsize=9)
+
+    n_rejected = (df['FIX_DURATION'] < DURATION_THRESH).sum()
+    ax.text(0.97, 0.95, f'Bß╗ï loß║íi: {n_rejected:,}\n({n_rejected/len(df):.1%})',
+            transform=ax.transAxes, ha='right', va='top',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#FFF9C4', alpha=0.9),
+            fontsize=9)
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier1_temporal_filter.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 9 (code) ===
+# ΓöÇΓöÇ 1D. FIX_PUPIL ΓÇö Xu h╞░ß╗¢ng theo thß╗⌐ tß╗▒ fixation (HC vs. SZ) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+fig.suptitle('Tier 1 ΓÇö ─É╞░ß╗¥ng k├¡nh ─æß╗ông tß╗¡ FIX_PUPIL theo thß╗⌐ tß╗▒ fixation (HC vs. SZ)',
+             fontsize=14, fontweight='bold')
+
+# Lß║Ñy c├íc subject c├│ ─æß╗º fixation ─æß╗â t├¡nh trung b├¼nh
+# Sß║»p xß║┐p fixations theo FIX_INDEX (thß╗⌐ tß╗▒ thß╗¥i gian)
+df_t = df_clean_train.copy()
+
+# Binning FIX_INDEX th├ánh 20 bins
+max_idx = df_t['FIX_INDEX'].quantile(0.95)
+df_t['FIX_INDEX_BIN'] = pd.cut(df_t['FIX_INDEX'].clip(upper=max_idx),
+                                 bins=20, labels=False)
+
+pupil_trend = (df_t.groupby(['Label', 'FIX_INDEX_BIN'])['FIX_PUPIL']
+                    .agg(['mean', 'sem'])
+                    .reset_index())
+
+ax = axes[0]
+for label, color, name in [(0, COLOR_HC, 'HC (Healthy Control)'),
+                            (1, COLOR_SZ, 'SZ (Schizophrenia)')]:
+    g = pupil_trend[pupil_trend['Label'] == label]
+    ax.plot(g['FIX_INDEX_BIN'], g['mean'], color=color, lw=2.5, label=name, marker='o', ms=4)
+    ax.fill_between(g['FIX_INDEX_BIN'],
+                    g['mean'] - g['sem'],
+                    g['mean'] + g['sem'],
+                    color=color, alpha=0.15)
+ax.set_title('Xu h╞░ß╗¢ng trung b├¼nh FIX_PUPIL theo thß╗⌐ tß╗▒ fixation')
+ax.set_xlabel('Thß╗⌐ tß╗▒ fixation (bin)')
+ax.set_ylabel('─É╞░ß╗¥ng k├¡nh ─æß╗ông tß╗¡ (FIX_PUPIL, a.u.)')
+ax.legend()
+
+# Violin plot tß╗òng thß╗â
+ax = axes[1]
+parts = ax.violinplot(
+    [df_clean_train.loc[df_clean_train['Label']==0,'FIX_PUPIL'].dropna().values,
+     df_clean_train.loc[df_clean_train['Label']==1,'FIX_PUPIL'].dropna().values],
+    positions=[0, 1], showmedians=True
+)
+for body, color in zip(parts['bodies'], [COLOR_HC, COLOR_SZ]):
+    body.set_facecolor(color); body.set_alpha(0.7)
+ax.set_xticks([0, 1])
+ax.set_xticklabels(['HC', 'SZ'])
+ax.set_title('Ph├ón phß╗æi FIX_PUPIL: HC vs. SZ')
+ax.set_ylabel('─É╞░ß╗¥ng k├¡nh ─æß╗ông tß╗¡ (FIX_PUPIL, a.u.)')
+
+# Th├¬m p-value test
+from scipy.stats import mannwhitneyu
+stat, pval = mannwhitneyu(
+    df_clean_train.loc[df_clean_train['Label']==0,'FIX_PUPIL'].dropna(),
+    df_clean_train.loc[df_clean_train['Label']==1,'FIX_PUPIL'].dropna()
+)
+sig_text = f'Mann-Whitney U\np = {pval:.4f}' + (' ***' if pval < 0.001 else ' **' if pval < 0.01 else ' *' if pval < 0.05 else ' ns')
+ax.text(0.5, 0.97, sig_text, transform=ax.transAxes, ha='center', va='top',
+        fontsize=9, bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier1_pupil_dynamics.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 11 (code) ===
+# ΓöÇΓöÇ 1E. 2D Spatial Boundary Scatter & Scanpath Filtering Overlay ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+import pandas as pd
+
+import numpy as np
+
+import matplotlib.pyplot as plt
+
+
+
+# Load a sample raw subject file (Subject 2 - SZ)
+
+sample_id = 2
+
+raw_subj_file = PROJECT_ROOT / 'EMS' / 'Train_Valid' / 'Fixations' / f'{sample_id:03d}.xlsx'
+
+df_raw_sample = pd.read_excel(raw_subj_file)
+
+
+
+# Label points based on filters
+
+df_raw_sample['Rejected_Spatial'] = (df_raw_sample['FIX_X'] < 0) | (df_raw_sample['FIX_X'] >= 1024) | (df_raw_sample['FIX_Y'] < 0) | (df_raw_sample['FIX_Y'] >= 768)
+
+df_raw_sample['Rejected_Temporal'] = (~df_raw_sample['Rejected_Spatial']) & (df_raw_sample['FIX_DURATION'] < 50)
+
+df_raw_sample['Clean'] = (~df_raw_sample['Rejected_Spatial']) & (~df_raw_sample['Rejected_Temporal'])
+
+
+
+fig, ax = plt.subplots(figsize=(10, 7))
+
+ax.set_facecolor('#F8F9FA')
+
+
+
+# Draw screen boundaries
+
+rect = plt.Rectangle((0, 0), 1024, 768, fill=False, color='black', lw=1.5, ls='-', label='Screen Area (1024x768)')
+
+ax.add_patch(rect)
+
+
+
+# Scatter plot of gaze points
+
+# 1. Clean points
+
+df_clean_pts = df_raw_sample[df_raw_sample['Clean']]
+
+ax.scatter(df_clean_pts['FIX_X'], 768 - df_clean_pts['FIX_Y'], c=COLOR_SZ, s=40, alpha=0.8, edgecolors='white', zorder=3, label='Valid Fixations')
+
+# Connect clean scanpath
+
+ax.plot(df_clean_pts['FIX_X'].values[:40], (768 - df_clean_pts['FIX_Y']).values[:40], color='gray', lw=1, alpha=0.5, zorder=2)
+
+
+
+# 2. Rejected Spatial points
+
+df_rej_sp = df_raw_sample[df_raw_sample['Rejected_Spatial']]
+
+ax.scatter(df_rej_sp['FIX_X'], 768 - df_rej_sp['FIX_Y'], c='red', marker='x', s=60, lw=1.5, zorder=4, label='Rejected (Spatial Boundary)')
+
+
+
+# 3. Rejected Temporal points
+
+df_rej_tp = df_raw_sample[df_raw_sample['Rejected_Temporal']]
+
+ax.scatter(df_rej_tp['FIX_X'], 768 - df_rej_tp['FIX_Y'], c='orange', marker='o', facecolors='none', s=50, lw=1.5, zorder=4, label='Rejected (Duration < 50ms)')
+
+
+
+ax.set_xlim(-100, 1124)
+
+ax.set_ylim(-50, 818)
+
+ax.set_title(f'Tier 1 ΓÇö 2D Scanpath Filtering: Subject {sample_id} (SZ)\n(Hiß╗ân thß╗ï 2D c├íc ─æiß╗âm hß╗úp lß╗ç vs. bß╗ï loß║íi bß╗Å)', fontsize=13, fontweight='bold')
+
+ax.set_xlabel('Screen X Coordinate (pixels)')
+
+ax.set_ylabel('Screen Y Coordinate (pixels, flipped)')
+
+ax.legend(loc='upper right')
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier1_2d_filtering.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 14 (code) ===
+# ΓöÇΓöÇ 2A. Load feature files ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+STIM_CSV  = PROJECT_ROOT / 'data' / 'processed' / 'features_stimulus_level.csv'
+SUBJ_CSV  = PROJECT_ROOT / 'data' / 'processed' / 'features_subject_level.csv'
+CAT_CSV   = PROJECT_ROOT / 'data' / 'metadata' / 'stimulus_categories.csv'
+
+df_stim = pd.read_csv(STIM_CSV)
+df_subj = pd.read_csv(SUBJ_CSV)
+
+# Chß╗ë lß║Ñy train subjects c├│ label r├╡ r├áng
+df_stim_train = df_stim[(df_stim['Label'].isin([0,1])) & (df_stim['Is_Test']==0)].copy()
+df_subj_train = df_subj[(df_subj['Label'].isin([0,1])) & (df_subj['Is_Test']==0)].copy()
+
+# C├íc cß╗Öt ─æß║╖c tr╞░ng Stimulus-level (15 features)
+STIM_FEAT_COLS = [
+    'fix_count', 'fix_dur_mean', 'fix_dur_median', 'fix_dur_std',
+    'sacc_amp_mean', 'sacc_amp_std', 'sacc_vel_mean', 'sacc_angle_mean',
+    'scanpath_length', 'convex_hull_area', 'center_bias',
+    'spatial_entropy', 'pupil_mean', 'pupil_std', 'pupil_cv'
+]
+
+print(f'Stimulus-level: {df_stim_train.shape[0]:,} trials ├ù {len(STIM_FEAT_COLS)} features')
+print(f'Subject-level:  {df_subj_train.shape[0]} subjects ├ù {df_subj_train.shape[1]} cols')
+
+label_map = {0: 'HC', 1: 'SZ'}
+df_stim_train['Group'] = df_stim_train['Label'].map(label_map)
+df_subj_train['Group'] = df_subj_train['Label'].map(label_map)
+
+=== Cell 15 (code) ===
+# ΓöÇΓöÇ 2B. Boxplot + Violin so s├ính ─æß║╖c tr╞░ng h├¼nh hß╗ìc scanpath ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+DISPLAY_FEATS = [
+    ('scanpath_length',  'Tß╗òng chiß╗üu d├ái scanpath (px)'),
+    ('convex_hull_area', 'Diß╗çn t├¡ch Convex Hull (px┬▓)'),
+    ('spatial_entropy',  'Spatial Entropy (bits)'),
+    ('fix_count',        'Sß╗æ l╞░ß╗úng fixation'),
+    ('sacc_vel_mean',    'Vß║¡n tß╗æc saccade trung b├¼nh (px/ms)'),
+    ('pupil_cv',         'Hß╗ç sß╗æ biß║┐n thi├¬n ─æß╗ông tß╗¡ (CV)'),
+]
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+fig.suptitle('Tier 2 ΓÇö So s├ính ─æß║╖c tr╞░ng h├¼nh hß╗ìc scanpath: HC vs. SZ', fontsize=14, fontweight='bold')
+
+palette = {'HC': COLOR_HC, 'SZ': COLOR_SZ}
+
+for ax, (feat, label) in zip(axes.flat, DISPLAY_FEATS):
+    sns.violinplot(data=df_stim_train, x='Group', y=feat, palette=palette,
+                   inner='quartile', ax=ax, order=['HC', 'SZ'])
+
+    # Mann-Whitney test
+    from scipy.stats import mannwhitneyu
+    hc_vals = df_stim_train.loc[df_stim_train['Label']==0, feat].dropna()
+    sz_vals = df_stim_train.loc[df_stim_train['Label']==1, feat].dropna()
+    _, pval = mannwhitneyu(hc_vals, sz_vals)
+    stars = '***' if pval < 0.001 else '**' if pval < 0.01 else '*' if pval < 0.05 else 'ns'
+    ymax = df_stim_train[feat].quantile(0.97)
+    ax.text(0.5, 0.97, f'p {"< 0.001" if pval < 0.001 else f"= {pval:.3f}"} ({stars})',
+            transform=ax.transAxes, ha='center', va='top', fontsize=8.5,
+            color='darkred' if pval < 0.05 else 'grey',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    ax.set_title(label)
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier2_feature_violin.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 16 (code) ===
+# ΓöÇΓöÇ 2C. Correlation Heatmap ΓÇö 15 Stimulus-Level Features ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+feat_labels = {
+    'fix_count': 'Fix count', 'fix_dur_mean': 'Dur mean', 'fix_dur_median': 'Dur median',
+    'fix_dur_std': 'Dur std', 'sacc_amp_mean': 'Sacc amp', 'sacc_amp_std': 'Sacc amp std',
+    'sacc_vel_mean': 'Sacc vel', 'sacc_angle_mean': 'Sacc angle',
+    'scanpath_length': 'Path len', 'convex_hull_area': 'Hull area',
+    'center_bias': 'Center bias', 'spatial_entropy': 'Entropy',
+    'pupil_mean': 'Pupil mean', 'pupil_std': 'Pupil std', 'pupil_cv': 'Pupil CV'
+}
+
+corr = df_stim_train[STIM_FEAT_COLS].corr(method='spearman')
+corr = corr.rename(index=feat_labels, columns=feat_labels)
+
+fig, ax = plt.subplots(figsize=(11, 9))
+mask = np.triu(np.ones_like(corr, dtype=bool))
+sns.heatmap(corr, mask=mask, cmap='RdBu_r', center=0, vmin=-1, vmax=1,
+            annot=True, fmt='.2f', annot_kws={'size': 8},
+            square=True, linewidths=0.3, ax=ax,
+            cbar_kws={'shrink': 0.7, 'label': 'Spearman ╧ü'})
+ax.set_title('Tier 2 ΓÇö Ma trß║¡n t╞░╞íng quan Spearman giß╗»a 15 ─æß║╖c tr╞░ng Stimulus-Level',
+             fontsize=13, fontweight='bold', pad=12)
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier2_correlation_heatmap.png', bbox_inches='tight')
+plt.show()
+
+# Highlight c├íc cß║╖p c├│ |r| > 0.7
+high_corr = []
+for i in range(len(corr.columns)):
+    for j in range(i+1, len(corr.columns)):
+        r = corr.iloc[i, j]
+        if abs(r) > 0.7:
+            high_corr.append((corr.columns[i], corr.columns[j], r))
+
+print('Cß║╖p ─æß║╖c tr╞░ng c├│ |╧ü| > 0.7 (nguy c╞í ─æa cß╗Öng tuyß║┐n):')
+for a, b, r in sorted(high_corr, key=lambda x: -abs(x[2])):
+    print(f'  {a:20s} ├ù {b:20s}  ╧ü = {r:+.3f}')
+
+=== Cell 17 (code) ===
+# ΓöÇΓöÇ 2D. Delta Features ΓÇö Dual Density Plots ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+from scipy.stats import gaussian_kde
+
+DELTA_PAIRS = [
+    ('delta_Social_Natural_fix_count',       r'$\Delta_{Social-Natural}$ Fix Count'),
+    ('delta_Manipulated_Natural_fix_count',  r'$\Delta_{Manipulated-Natural}$ Fix Count'),
+    ('delta_Social_Natural_sacc_vel_mean',   r'$\Delta_{Social-Natural}$ Sacc Velocity'),
+    ('delta_Social_Natural_scanpath_length', r'$\Delta_{Social-Natural}$ Scanpath Length'),
+    ('delta_Social_Natural_pupil_mean',      r'$\Delta_{Social-Natural}$ Pupil Mean'),
+    ('delta_Manipulated_Natural_pupil_mean', r'$\Delta_{Manipulated-Natural}$ Pupil Mean'),
+]
+
+# Chß╗ë lß║Ñy delta cols c├│ sß║╡n
+avail_pairs = [(c, lbl) for c, lbl in DELTA_PAIRS if c in df_subj_train.columns]
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+fig.suptitle('Tier 2 ΓÇö Ph├ón phß╗æi ─æß║╖c tr╞░ng Delta (ngß╗» cß║únh li├¬n thß╗â loß║íi ß║únh): HC vs. SZ',
+             fontsize=13, fontweight='bold')
+
+for ax, (col, title) in zip(axes.flat, avail_pairs):
+    for label, color, name in [(0, COLOR_HC, 'HC'), (1, COLOR_SZ, 'SZ')]:
+        vals = df_subj_train.loc[df_subj_train['Label'] == label, col].dropna()
+        if len(vals) < 5:
+            continue
+        xs = np.linspace(vals.min() - vals.std(), vals.max() + vals.std(), 200)
+        kde = gaussian_kde(vals, bw_method='scott')
+        ax.plot(xs, kde(xs), color=color, lw=2.5, label=name)
+        ax.fill_between(xs, kde(xs), alpha=0.15, color=color)
+        ax.axvline(vals.mean(), color=color, lw=1.2, ls='--', alpha=0.7)
+
+    ax.axvline(0, color='black', lw=1, ls=':', alpha=0.5, label='╬ö = 0 (kh├┤ng lß╗çch)')
+    ax.set_title(title, fontsize=9.5)
+    ax.set_xlabel('Delta value')
+    ax.set_ylabel('Mß║¡t ─æß╗Ö x├íc suß║Ñt')
+    ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier2_delta_density.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 19 (code) ===
+# ΓöÇΓöÇ 2E. Contextual Delta Derivation Mechanism ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+import matplotlib.pyplot as plt
+
+import seaborn as sns
+
+
+
+# Load subject-level features
+
+df_subj_feats = pd.read_csv(SUBJ_CSV)
+
+df_subj_feats_train = df_subj_feats[df_subj_feats['Label'].isin([0, 1]) & (df_subj_feats['Is_Test'] == 0)]
+
+
+
+# Select subject 203 (SZ) and subject 2 (HC)
+
+sz_sub = df_subj_feats_train[df_subj_feats_train['Subject_ID'] == 203].iloc[0]
+
+hc_sub = df_subj_feats_train[df_subj_feats_train['Subject_ID'] == 2].iloc[0]
+
+
+
+categories = ['Social', 'Natural', 'Manipulated', 'Synthetic']
+
+hc_fix_counts = [hc_sub[f'{cat}_fix_count'] for cat in categories]
+
+sz_fix_counts = [sz_sub[f'{cat}_fix_count'] for cat in categories]
+
+
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+fig.suptitle('Tier 2 ΓÇö C╞í chß║┐ t├¡nh Contextual Delta: Kh├íc biß╗çt giß╗»a nh├│m HC v├á SZ', fontsize=14, fontweight='bold')
+
+
+
+# 1. Bar plot comparing absolute values
+
+ax = axes[0]
+
+x = np.arange(len(categories))
+
+width = 0.35
+
+ax.bar(x - width/2, hc_fix_counts, width, label='HC (Subject 2)', color=COLOR_HC)
+
+ax.bar(x + width/2, sz_fix_counts, width, label='SZ (Subject 203)', color=COLOR_SZ)
+
+ax.set_xticks(x)
+
+ax.set_xticklabels(categories)
+
+ax.set_ylabel('Sß╗æ l╞░ß╗úng Fixation trung b├¼nh')
+
+ax.set_title('Sß╗æ l╞░ß╗úng Fixation tuyß╗çt ─æß╗æi theo tß╗½ng thß╗â loß║íi ß║únh')
+
+ax.legend()
+
+
+
+# 2. Plotting the resulting Delta
+
+ax = axes[1]
+
+hc_delta = hc_sub['delta_Social_Natural_fix_count']
+
+sz_delta = sz_sub['delta_Social_Natural_fix_count']
+
+ax.bar(['HC (Subject 2)', 'SZ (Subject 203)'], [hc_delta, sz_delta], color=[COLOR_HC, COLOR_SZ], width=0.5, edgecolor='black', alpha=0.8)
+
+ax.axhline(0, color='black', lw=1, ls='--')
+
+ax.set_ylabel('Delta Fixation Count (Social - Natural)')
+
+ax.set_title(r'─Éß║╖c tr╞░ng Delta: $\Delta_{Social-Natural}$ Fixation Count' + '\n(HC c├│ delta d╞░╞íng lß╗¢n; SZ c├│ delta ├óm hoß║╖c nhß╗Å)')
+
+# Add value labels
+
+for i, val in enumerate([hc_delta, sz_delta]):
+
+    ax.text(i, val + (0.5 if val >= 0 else -1.5), f'{val:+.2f}', ha='center', fontweight='bold')
+
+
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier2_delta_mechanism.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 22 (code) ===
+# ΓöÇΓöÇ 3A. Load OOF predictions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+OOF_XGB = PROJECT_ROOT / 'results' / 'baselines_s42' / 'xgboost_oof_subject_preds.csv'
+
+df_oof_xgb = pd.read_csv(OOF_XGB)
+print('XGBoost OOF cols:', df_oof_xgb.columns.tolist())
+print(df_oof_xgb.head(3))
+
+with open(PROJECT_ROOT / 'results' / 'baselines_s42' / 'xgboost_results_summary.json') as f:
+    xgb_summary = json.load(f)
+
+print(f"\nXGBoost Kß║┐t quß║ú (subject-level):")
+for k, v in xgb_summary['subject_level'].items():
+    print(f"  {k:15s}: {v:.4f}")
+
+=== Cell 23 (code) ===
+# ΓöÇΓöÇ 3B. Retrain XGBoost ─æß╗â lß║Ñy Feature Importance & SHAP ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# (Cß║ºn retrain v├¼ model objects kh├┤ng ─æ╞░ß╗úc l╞░u ra ─æ─⌐a)
+import xgboost as xgb
+from sklearn.metrics import roc_auc_score
+
+# Load features
+df_stim = pd.read_csv(STIM_CSV)
+df_subj_feat = pd.read_csv(SUBJ_CSV)
+df_cat_map = pd.read_csv(CAT_CSV) if CAT_CSV.exists() else None
+
+# Chß╗ë lß║Ñy train c├│ label
+df_tr = df_stim[(df_stim['Label'].isin([0,1])) & (df_stim['Is_Test']==0)].copy()
+
+# Merge delta features
+delta_cols = [c for c in df_subj_feat.columns
+              if c.startswith('delta_') or c.startswith('Social_')
+              or c.startswith('Natural_') or c.startswith('Synthetic_')
+              or c.startswith('Manipulated_')]
+delta_cols = [c for c in delta_cols if c not in {'Subject_ID','Label','Is_Test'}]
+df_delta = df_subj_feat[['Subject_ID'] + delta_cols].drop_duplicates('Subject_ID')
+df_tr = df_tr.merge(df_delta, on='Subject_ID', how='left')
+
+META_COLS = {'Subject_ID','Stimulus_ID','Label','Is_Test','Category','Fold'}
+feat_cols = [c for c in df_tr.columns if c not in META_COLS]
+X_all = df_tr[feat_cols].fillna(0).values
+y_all = df_tr['Label'].values
+
+# Train tr├¬n to├án bß╗Ö train set (chß╗ë ─æß╗â lß║Ñy feature importance & SHAP)
+xgb_model = xgb.XGBClassifier(
+    n_estimators=200, learning_rate=0.05, max_depth=5,
+    subsample=0.8, colsample_bytree=0.8, random_state=42,
+    eval_metric='logloss'
+)
+xgb_model.fit(X_all, y_all, verbose=False)
+print(f'Model trained on {len(X_all):,} samples ├ù {len(feat_cols)} features')
+
+=== Cell 24 (code) ===
+# ΓöÇΓöÇ 3C. Top-20 Feature Importance Plot ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+importances = xgb_model.feature_importances_
+feat_imp_df = pd.DataFrame({'Feature': feat_cols, 'Importance': importances})
+feat_imp_df = feat_imp_df.sort_values('Importance', ascending=False).head(20)
+
+# T├┤ m├áu theo nh├│m feature
+def get_feat_color(name):
+    if name.startswith('delta_'):
+        return '#FF7043'
+    elif any(name.startswith(c) for c in ['Social_','Natural_','Synthetic_','Manipulated_']):
+        return '#FFA726'
+    elif 'pupil' in name:
+        return '#66BB6A'
+    else:
+        return '#42A5F5'
+
+colors = [get_feat_color(f) for f in feat_imp_df['Feature']]
+
+fig, ax = plt.subplots(figsize=(10, 8))
+bars = ax.barh(range(len(feat_imp_df)), feat_imp_df['Importance'].values,
+                color=colors, edgecolor='white', linewidth=0.5)
+ax.set_yticks(range(len(feat_imp_df)))
+ax.set_yticklabels(feat_imp_df['Feature'].values, fontsize=9)
+ax.invert_yaxis()
+ax.set_xlabel('XGBoost Feature Importance (Gain)')
+ax.set_title('Tier 3 ΓÇö Top 20 Feature Importance (XGBoost)', fontsize=13, fontweight='bold')
+
+# Legend
+legend_patches = [
+    mpatches.Patch(color='#FF7043', label='Delta features (╬ö)'),
+    mpatches.Patch(color='#FFA726', label='Category-mean features'),
+    mpatches.Patch(color='#66BB6A', label='Pupil dynamics'),
+    mpatches.Patch(color='#42A5F5', label='Scanpath geometry / fixation stats'),
+]
+ax.legend(handles=legend_patches, loc='lower right', fontsize=8.5)
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier3_feature_importance.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 25 (code) ===
+# ΓöÇΓöÇ 3D. Confusion Matrix tß╗½ OOF predictions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_auc_score
+
+y_true_oof = df_oof_xgb['Label'].values
+y_prob_oof = df_oof_xgb['Pred_Proba_Subject'].values
+y_pred_oof = (y_prob_oof >= 0.5).astype(int)
+
+cm = confusion_matrix(y_true_oof, y_pred_oof)
+auc_oof = roc_auc_score(y_true_oof, y_prob_oof)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+fig.suptitle('Tier 3 ΓÇö XGBoost OOF Evaluation (Subject-Level)', fontsize=13, fontweight='bold')
+
+# Confusion Matrix
+ax = axes[0]
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['HC', 'SZ'])
+disp.plot(ax=ax, colorbar=False, cmap='Blues', values_format='d')
+ax.set_title(f'Confusion Matrix (threshold = 0.5)\nOOF AUC = {auc_oof:.4f}')
+
+# Th├¬m metrics b├¬n cß║ính
+tn, fp, fn, tp = cm.ravel()
+sens = tp / (tp + fn)
+spec = tn / (tn + fp)
+ppv  = tp / (tp + fp) if (tp+fp)>0 else 0
+npv  = tn / (tn + fn) if (tn+fn)>0 else 0
+ax.text(1.05, 0.5,
+        f'Sensitivity: {sens:.3f}\nSpecificity: {spec:.3f}\nPPV: {ppv:.3f}\nNPV: {npv:.3f}',
+        transform=ax.transAxes, fontsize=10.5, va='center',
+        bbox=dict(boxstyle='round', facecolor='#E3F2FD'))
+
+# Probability Distribution Plot
+ax = axes[1]
+for label, color, name in [(0, COLOR_HC, 'HC'), (1, COLOR_SZ, 'SZ')]:
+    vals = y_prob_oof[y_true_oof == label]
+    ax.hist(vals, bins=20, alpha=0.65, color=color, label=name,
+            edgecolor='white', density=True)
+ax.axvline(0.5, color='black', ls='--', lw=1.5, label='Threshold = 0.5')
+ax.set_xlabel('P(SZ) ΓÇö X├íc suß║Ñt dß╗▒ ─æo├ín')
+ax.set_ylabel('Mß║¡t ─æß╗Ö x├íc suß║Ñt')
+ax.set_title('Ph├ón phß╗æi x├íc suß║Ñt OOF theo nh├│m')
+ax.legend()
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier3_oof_eval.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 26 (code) ===
+# ΓöÇΓöÇ 3E. SHAP Summary Plot ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+try:
+    import shap
+
+    # T├¡nh SHAP values tr├¬n to├án bß╗Ö train set (sample 500 nß║┐u qu├í lß╗¢n)
+    sample_idx = np.random.choice(len(X_all), size=min(500, len(X_all)), replace=False)
+    X_sample = X_all[sample_idx]
+
+    explainer = shap.TreeExplainer(xgb_model)
+    shap_values = explainer.shap_values(X_sample)
+
+    # Nß║┐u output l├á list (binary), lß║Ñy class 1 (SZ)
+    if isinstance(shap_values, list):
+        shap_vals_plot = shap_values[1]
+    else:
+        shap_vals_plot = shap_values
+
+    # Chß╗ë show top 20
+    fig, ax = plt.subplots(figsize=(10, 8))
+    shap.summary_plot(
+        shap_vals_plot,
+        features=X_sample,
+        feature_names=feat_cols,
+        max_display=20,
+        show=False,
+        plot_type='dot'
+    )
+    plt.title('Tier 3 ΓÇö SHAP Summary Plot (XGBoost, Top 20 features)', fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(PROJECT_ROOT / 'results' / 'tier3_shap_summary.png', bbox_inches='tight')
+    plt.show()
+    print('Γ£à SHAP analysis ho├án tß║Ñt.')
+
+except ImportError:
+    print('ΓÜá∩╕Å SHAP ch╞░a ─æ╞░ß╗úc c├ái. Chß║íy: pip install shap')
+
+=== Cell 28 (code) ===
+# ΓöÇΓöÇ 3F. Tabular Baseline Performance Comparison ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+import json
+
+import pandas as pd
+
+import matplotlib.pyplot as plt
+
+
+
+models = ['xgboost', 'lightgbm', 'catboost']
+
+tab_rows = []
+
+
+
+for m in models:
+
+    path = PROJECT_ROOT / 'results' / 'baselines_s42' / f'{m}_results_summary.json'
+
+    if path.exists():
+
+        with open(path) as f:
+
+            d = json.load(f)
+
+            subj = d.get('subject_level', {})
+
+            tab_rows.append({
+
+                'Model': m.upper(),
+
+                'AUC': subj.get('auc', 0),
+
+                'Accuracy': subj.get('accuracy', 0),
+
+                'F1': subj.get('f1', 0)
+
+            })
+
+
+
+df_tab_comp = pd.DataFrame(tab_rows)
+
+print(df_tab_comp)
+
+
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+df_tab_comp.set_index('Model')[['AUC', 'Accuracy']].plot(kind='bar', ax=ax, edgecolor='white', width=0.6, color=['#4CAF50', '#81C784'])
+
+ax.set_title('Tier 3 ΓÇö So s├ính hiß╗çu n─âng c├íc m├┤ h├¼nh Tabular Baseline (Seed 42)', fontsize=13, fontweight='bold')
+
+ax.set_ylabel('Score')
+
+ax.set_xlabel('Model')
+
+ax.tick_params(axis='x', rotation=0)
+
+ax.set_ylim(0.7, 1.0)
+
+ax.grid(True, axis='y', alpha=0.3)
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier3_tabular_comparison.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 30 (code) ===
+# ΓöÇΓöÇ 3G. Best Tabular Model (CatBoost) Feature Importance & OOF Evaluation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+from catboost import CatBoostClassifier
+
+
+
+# Train CatBoost on all train data to extract feature importances
+
+cb_model = CatBoostClassifier(
+
+    iterations=200, learning_rate=0.05, depth=5,
+
+    random_seed=42, verbose=False
+
+)
+
+cb_model.fit(X_all, y_all)
+
+importances_cb = cb_model.get_feature_importance()
+
+feat_imp_cb = pd.DataFrame({'Feature': feat_cols, 'Importance': importances_cb})
+
+feat_imp_cb = feat_imp_cb.sort_values('Importance', ascending=False).head(20)
+
+
+
+colors_cb = [get_feat_color(f) for f in feat_imp_cb['Feature']]
+
+
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+ax.barh(range(len(feat_imp_cb)), feat_imp_cb['Importance'].values, color=colors_cb, edgecolor='white', linewidth=0.5)
+
+ax.set_yticks(range(len(feat_imp_cb)))
+
+ax.set_yticklabels(feat_imp_cb['Feature'].values, fontsize=9)
+
+ax.invert_yaxis()
+
+ax.set_xlabel('CatBoost Feature Importance (LossFunctionChange)')
+
+ax.set_title('Tier 3 ΓÇö Top 20 Feature Importance (Best Tabular Model: CatBoost)', fontsize=13, fontweight='bold')
+
+ax.legend(handles=legend_patches, loc='lower right', fontsize=8.5)
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier3_catboost_importance.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 33 (code) ===
+# ΓöÇΓöÇ 4A. Load CEFAM OOF predictions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+OOF_CEFAM = PROJECT_ROOT / 'results' / 'cefam_s42' / 'cefam_oof_subject_preds.csv'
+
+df_oof_cefam = pd.read_csv(OOF_CEFAM)
+print('CEFAM OOF cols:', df_oof_cefam.columns.tolist())
+print(f'Sß╗æ subjects: {len(df_oof_cefam)}')
+print(df_oof_cefam.head(3))
+
+with open(PROJECT_ROOT / 'results' / 'bica_s42' / 'bica_results_summary.json') as f:
+    bica_summary = json.load(f)
+print(f"\nBiCA-HS AUC: {bica_summary['overall']['auc']:.4f}")
+print(f"CEFAM AUC (from tier5 json):")
+with open(PROJECT_ROOT / 'results' / 'tier5_s42' / 'tier5_results_summary.json') as f:
+    t5_summary = json.load(f)
+print(f"  Tier4 OOF AUC = {t5_summary['baselines']['tier4_oof_auc']:.4f}")
+
+=== Cell 34 (code) ===
+# ΓöÇΓöÇ 4B. Scanpath Attention Visualization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# Proxy attention: d├╣ng per-category OOF confidence cß╗ºa CEFAM l├ám trß╗ìng sß╗æ
+# C├┤ng thß╗⌐c: attn_proxy_i = P(SZ|category_i) cho tß╗½ng fixation
+
+def plot_scanpath_attention(subject_id, df_fixations, df_cefam_oof,
+                            title=None, ax=None, screen_w=1024, screen_h=768):
+    """
+    Vß║╜ chuß╗ùi fixation cß╗ºa 1 subject, t├┤ m├áu v├á scale k├¡ch th╞░ß╗¢c ─æiß╗âm
+    theo proxy attention (x├íc suß║Ñt dß╗▒ ─æo├ín SZ cß╗ºa CEFAM per-category).
+    """
+    subj_fix = df_fixations[df_fixations['Subject_ID'] == subject_id].copy()
+    if len(subj_fix) == 0:
+        return
+
+    # Lß║Ñy category map (IMAGE ΓåÆ category prefix)
+    def img_to_cat(img_name):
+        name_lower = img_name.lower()
+        for cat, prefix in [('Social', ['act_', 'fb_', 'ind_', 'out']),
+                             ('Natural', ['nat_']),
+                             ('Manipulated', ['man_']),
+                             ('Synthetic', ['syn_'])]:
+            if any(name_lower.startswith(p) for p in prefix):
+                return cat
+        return 'Unknown'
+
+    subj_fix['Category'] = subj_fix['IMAGE'].apply(img_to_cat)
+
+    # Lß║Ñy per-category OOF prob cho subject n├áy
+    row = df_cefam_oof[df_cefam_oof['Subject_ID'] == subject_id]
+    if len(row) == 0:
+        # Subject n├áy kh├┤ng trong CEFAM OOF (test set)
+        cat_prob = {'Social': 0.5, 'Natural': 0.5, 'Manipulated': 0.5, 'Synthetic': 0.5}
+    else:
+        row = row.iloc[0]
+        cat_prob = {
+            'Social':      row.get('Social', 0.5),
+            'Natural':     row.get('Natural', 0.5),
+            'Manipulated': row.get('Manipulated', 0.5),
+            'Synthetic':   row.get('Synthetic', 0.5),
+        }
+
+    # G├ín attention weight cho mß╗ùi fixation theo category
+    subj_fix['attn'] = subj_fix['Category'].map(cat_prob).fillna(0.5)
+    # Normalize vß╗ü [0,1]
+    mn, mx = subj_fix['attn'].min(), subj_fix['attn'].max()
+    if mx > mn:
+        subj_fix['attn_norm'] = (subj_fix['attn'] - mn) / (mx - mn)
+    else:
+        subj_fix['attn_norm'] = 0.5
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Nß╗ün x├ím biß╗âu diß╗àn m├án h├¼nh
+    ax.set_facecolor('#F5F5F5')
+    ax.set_xlim(0, screen_w)
+    ax.set_ylim(screen_h, 0)  # Y flip (origin top-left)
+
+    # Vß║╜ tß╗½ng nh├│m fixation theo category
+    cat_colors = {'Social': '#E91E63', 'Natural': '#4CAF50',
+                  'Manipulated': '#FF9800', 'Synthetic': '#2196F3', 'Unknown': '#9E9E9E'}
+
+    for cat, g in subj_fix.groupby('Category'):
+        sizes = 20 + 180 * g['attn_norm'].values
+        ax.scatter(g['FIX_X'], g['FIX_Y'],
+                   s=sizes,
+                   c=[cat_colors.get(cat, '#9E9E9E')],
+                   alpha=0.6, edgecolors='white', linewidths=0.4,
+                   label=f'{cat} (p={cat_prob.get(cat,0.5):.2f})')
+
+    # Vß║╜ ─æ╞░ß╗¥ng nß╗æi scanpath (tß║Ñt cß║ú fixations theo FIX_INDEX)
+    subj_all = subj_fix.sort_values('FIX_INDEX')
+    ax.plot(subj_all['FIX_X'].values[:50], subj_all['FIX_Y'].values[:50],
+            color='black', lw=0.5, alpha=0.3, zorder=0)
+
+    label_txt = df_cefam_oof.loc[df_cefam_oof['Subject_ID']==subject_id,'Label'].values
+    group_name = f"{'SZ' if (len(label_txt)>0 and label_txt[0]==1) else 'HC'}"
+    ax.set_title(title or f'Subject {subject_id} ({group_name}) ΓÇö Proxy Attention Scanpath')
+    ax.set_xlabel('FIX_X (pixels)')
+    ax.set_ylabel('FIX_Y (pixels)')
+    ax.legend(fontsize=7, loc='upper right', framealpha=0.8)
+
+    return ax
+
+
+# Chß╗ìn 4 subjects ─æiß╗ân h├¼nh: 2 HC, 2 SZ
+hc_subjects = df_oof_cefam[df_oof_cefam['Label']==0]['Subject_ID'].values[:2]
+sz_subjects = df_oof_cefam[df_oof_cefam['Label']==1]['Subject_ID'].values[:2]
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig.suptitle('Tier 4 ΓÇö CEFAM Proxy Attention Scanpath Visualization\n'
+             '(K├¡ch th╞░ß╗¢c ─æiß╗âm Γê¥ x├íc suß║Ñt dß╗▒ ─æo├ín SZ cß╗ºa CEFAM; m├áu = thß╗â loß║íi ß║únh)',
+             fontsize=13, fontweight='bold')
+
+for ax, sid in zip(axes.flat[:2], hc_subjects):
+    plot_scanpath_attention(sid, df_clean_train, df_oof_cefam, ax=ax)
+
+for ax, sid in zip(axes.flat[2:], sz_subjects):
+    plot_scanpath_attention(sid, df_clean_train, df_oof_cefam, ax=ax)
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier4_scanpath_attention.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 35 (code) ===
+# ΓöÇΓöÇ 4C. Load ResNet50 feature dict ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+import numpy as np
+from collections import defaultdict
+
+feat_dict = np.load(PROJECT_ROOT / 'data' / 'external' / 'feature_dict_ResNet50.npy', allow_pickle=True).item()
+
+=== Cell 36 (code) ===
+# ΓöÇΓöÇ 4D. Build subject-level mean embedding ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# Aggregate: mean fixation features across tß║Ñt cß║ú trials cß╗ºa mß╗ùi subject
+
+sid_to_label = dict(zip(df_clean_train['Subject_ID'], df_clean_train['Label']))
+
+subj_vecs = defaultdict(list)
+for (sub_id, img_name), arr in feat_dict.items():
+    # arr shape: [N_fixations, 2048]
+    subj_vecs[sub_id].append(arr.mean(axis=0))  # mean theo fixations -> [2048]
+
+subject_embeddings = {}
+subject_labels     = {}
+for sid, vecs in subj_vecs.items():
+    lbl = sid_to_label.get(sid, -1)
+    if lbl in [0, 1]:
+        subject_embeddings[sid] = np.mean(vecs, axis=0)
+        subject_labels[sid]     = lbl
+
+n_hc = sum(v == 0 for v in subject_labels.values())
+n_sz = sum(v == 1 for v in subject_labels.values())
+emb_dim = next(iter(subject_embeddings.values())).shape
+print(f'Subjects c├│ embedding: {len(subject_embeddings)}')
+print(f'Embedding dim        : {emb_dim}')
+print(f'HC: {n_hc}   SZ: {n_sz}')
+
+
+=== Cell 37 (code) ===
+# ΓöÇΓöÇ 4E. PCA ΓåÆ t-SNE ΓåÆ Scatter Plot ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+sids = [sid for sid, lbl in subject_labels.items() if lbl in [0, 1]]
+X_emb = np.stack([subject_embeddings[sid] for sid in sids])
+y_emb = np.array([subject_labels[sid] for sid in sids])
+print(f'Embedding matrix: {X_emb.shape}')
+
+# PCA tr╞░ß╗¢c (giß║úm nhiß╗àu + t─âng tß╗æc t-SNE)
+pca = PCA(n_components=min(50, X_emb.shape[1]), random_state=SEED)
+X_pca = pca.fit_transform(X_emb)
+print(f'PCA explained variance (top-50): {pca.explained_variance_ratio_.sum():.3f}')
+
+# t-SNE
+tsne = TSNE(n_components=2, perplexity=min(30, len(sids)//3),
+             random_state=SEED, n_iter=1000, learning_rate='auto', init='pca')
+X_tsne = tsne.fit_transform(X_pca)
+print('t-SNE ho├án tß║Ñt.')
+
+# Plot
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+fig.suptitle('Tier 4 ΓÇö ResNet50 Visual Embedding Space: HC vs. SZ', fontsize=13, fontweight='bold')
+
+ax = axes[0]
+for label, color, name in [(0, COLOR_HC, 'HC'), (1, COLOR_SZ, 'SZ')]:
+    mask = y_emb == label
+    ax.scatter(X_tsne[mask, 0], X_tsne[mask, 1],
+               c=color, alpha=0.75, s=55, edgecolors='white', lw=0.4, label=name)
+ax.set_title('t-SNE (PCA-50 ΓåÆ t-SNE-2D)\nResNet50 Subject-Mean Embeddings')
+ax.set_xlabel('t-SNE dim 1')
+ax.set_ylabel('t-SNE dim 2')
+ax.legend()
+
+# PCA 2D plot
+pca2 = PCA(n_components=2, random_state=SEED)
+X_pca2 = pca2.fit_transform(X_emb)
+
+ax = axes[1]
+for label, color, name in [(0, COLOR_HC, 'HC'), (1, COLOR_SZ, 'SZ')]:
+    mask = y_emb == label
+    ax.scatter(X_pca2[mask, 0], X_pca2[mask, 1],
+               c=color, alpha=0.75, s=55, edgecolors='white', lw=0.4, label=name)
+ax.set_title(f'PCA-2D\n(PC1={pca2.explained_variance_ratio_[0]:.1%}, PC2={pca2.explained_variance_ratio_[1]:.1%})')
+ax.set_xlabel('PC1')
+ax.set_ylabel('PC2')
+ax.legend()
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier4_resnet_tsne.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 39 (code) ===
+# ΓöÇΓöÇ 4F. Spatiotemporal Graph Topology Visualization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+import torch
+
+
+
+graphs_file = PROJECT_ROOT / 'data' / 'processed' / 'graphs' / 'graphs.pt'
+
+if graphs_file.exists():
+
+    graphs = torch.load(graphs_file, weights_only=False)
+
+    # Find a sample graph (first graph of subject 2)
+
+    sample_g = [g for g in graphs if g.subject_id == 2][0]
+
+
+
+    x_nodes = sample_g.x[:, 0].numpy() * 1024
+
+    y_nodes = sample_g.x[:, 1].numpy() * 768
+
+    pupil_nodes = sample_g.x[:, 3].numpy()
+
+    dur_nodes = sample_g.x[:, 2].numpy()
+
+
+
+    # Scale nodes for visualization
+
+    node_sizes = 50 + 400 * (dur_nodes - dur_nodes.min()) / (dur_nodes.max() - dur_nodes.min() + 1e-8)
+
+
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.set_facecolor('#F8F9FA')
+
+
+
+    # Draw edges
+
+    edge_idx = sample_g.edge_index.numpy()
+
+    for i in range(edge_idx.shape[1]):
+
+        u, v = edge_idx[0, i], edge_idx[1, i]
+
+        ax.annotate('', xy=(x_nodes[v], 768 - y_nodes[v]), xytext=(x_nodes[u], 768 - y_nodes[u]),
+
+                    arrowprops=dict(arrowstyle='->', color='gray', lw=1.5, alpha=0.6, shrinkA=8, shrinkB=8))
+
+
+
+    # Draw nodes
+
+    sc = ax.scatter(x_nodes, 768 - y_nodes, s=node_sizes, c=pupil_nodes, cmap='viridis', bondage=None,
+
+                    edgecolors='black', lw=1.0, zorder=3, label='Fixation Nodes')
+
+
+
+    # Annotate node order
+
+    for idx in range(len(x_nodes)):
+
+        ax.text(x_nodes[idx], 768 - y_nodes[idx], str(idx + 1), ha='center', va='center',
+
+                fontsize=8, color='white', fontweight='bold')
+
+
+
+    ax.set_xlim(-50, 1074)
+
+    ax.set_ylim(-50, 818)
+
+    ax.set_title('Tier 4B ΓÇö Spatiotemporal Graph Topology (Subject 2, Trial 1)\n(K├¡ch th╞░ß╗¢c n├║t Γê¥ duration, m├áu sß║»c Γê¥ pupil size, m┼⌐i t├¬n = thß╗¥i gian)',
+
+                 fontsize=12, fontweight='bold')
+
+    ax.set_xlabel('Screen X Coordinate (pixels)')
+
+    ax.set_ylabel('Screen Y Coordinate (pixels, flipped)')
+
+    plt.colorbar(sc, ax=ax, label='─É╞░ß╗¥ng k├¡nh ─æß╗ông tß╗¡ (normalized pupil)')
+
+    plt.tight_layout()
+
+    plt.savefig(PROJECT_ROOT / 'results' / 'tier4_graph_topology.png', bbox_inches='tight')
+
+    plt.show()
+
+
+
+=== Cell 41 (code) ===
+# ΓöÇΓöÇ 4G. Real CEFAM & GNN Attention Weights Extraction & Visualization ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+import torch
+
+import yaml
+
+import numpy as np
+
+import pandas as pd
+
+import matplotlib.pyplot as plt
+
+from src.tier4_advanced.hybrid_model import GNNCEFAMHybridModel
+
+from src.tier3_tabular.group_kfold import get_subject_folds
+
+from scripts.train_tier4 import build_flat_features_dict
+
+
+
+# 1. Load flat features (stimulus + delta)
+
+features_path = PROJECT_ROOT / 'data' / 'processed' / 'features_stimulus_level.csv'
+
+features_subject_path = PROJECT_ROOT / 'data' / 'processed' / 'features_subject_level.csv'
+
+df_stim = pd.read_csv(features_path)
+
+meta_cols_set = {'Subject_ID', 'Stimulus_ID', 'Label', 'Is_Test'}
+
+feature_cols = [c for c in df_stim.columns if c not in meta_cols_set]
+
+flat_features_dict, handcrafted_dim, delta_cols = build_flat_features_dict(
+
+    df_stim, feature_cols, features_subject_path
+
+)
+
+
+
+# 2. Get subject folds
+
+cv_path = PROJECT_ROOT / 'EMS' / 'Train_Valid.xlsx'
+
+subject_to_fold = get_subject_folds(cv_path)
+
+
+
+# 3. Load graphs
+
+graphs_file = PROJECT_ROOT / 'data' / 'processed' / 'graphs' / 'graphs.pt'
+
+all_graphs = torch.load(graphs_file, weights_only=False)
+
+train_valid_graphs = [g for g in all_graphs if g.is_test == 0 and g.subject_id in subject_to_fold]
+
+
+
+# 4. Load config and model
+
+with open(PROJECT_ROOT / 'configs' / 'cefam_config.yaml') as f:
+
+    cefam_cfg = yaml.safe_load(f)
+
+
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+cefam_model = GNNCEFAMHybridModel(handcrafted_dim=handcrafted_dim, config=cefam_cfg).to(device)
+
+
+
+ckpt_path = PROJECT_ROOT / 'results' / 'cefam_s42' / 'checkpoints' / 'cefam_fold_0_best.pt'
+
+if ckpt_path.exists():
+
+    cefam_model.load_state_dict(torch.load(ckpt_path, map_location=device))
+
+    cefam_model.eval()
+
+
+
+    val_subj_fold0 = [s_id for s_id, f in subject_to_fold.items() if f == 0]
+
+    val_graphs_fold0 = [g for g in train_valid_graphs if g.subject_id in val_subj_fold0]
+
+    sample_graph = val_graphs_fold0[0].to(device)
+
+
+
+    hc_feat = flat_features_dict.get((int(sample_graph.subject_id), sample_graph.stimulus_id), np.zeros(handcrafted_dim, dtype=np.float32))
+
+    hc_tensor = torch.tensor(hc_feat, dtype=torch.float32).unsqueeze(0).to(device)
+
+
+
+    from torch_geometric.data import Batch
+
+    batch_graph = Batch.from_data_list([sample_graph])
+
+
+
+    with torch.no_grad():
+
+        logits, gnn_attn, cefam_attn_1, _ = cefam_model(batch_graph, hc_tensor)
+
+
+
+    real_gnn_attn = gnn_attn.cpu().numpy()
+
+    real_cefam_attn = cefam_attn_1.squeeze().cpu().numpy()
+
+
+
+    real_gnn_attn_norm = (real_gnn_attn - real_gnn_attn.min()) / (real_gnn_attn.max() - real_gnn_attn.min() + 1e-8)
+
+    real_cefam_attn_norm = (real_cefam_attn - real_cefam_attn.min()) / (real_cefam_attn.max() - real_cefam_attn.min() + 1e-8)
+
+
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+
+    fig.suptitle(f'Tier 4 ΓÇö Real Attention Weights Visualization: Subject {sample_graph.subject_id.item()}\n'
+
+                 '(K├¡ch th╞░ß╗¢c n├║t ─æß║íi diß╗çn cho ─æß╗Ö lß╗¢n attention thß╗▒c tß║┐ tr├¡ch xuß║Ñt tß╗½ GNN v├á CEFAM)', fontsize=14, fontweight='bold')
+
+
+
+    # Plot GNN Attention
+
+    ax = axes[0]
+
+    ax.set_facecolor('#F5F5F5')
+
+    ax.set_xlim(0, 1024)
+
+    ax.set_ylim(768, 0)
+
+    x_coords = sample_graph.x[:, 0].cpu().numpy() * 1024
+
+    y_coords = sample_graph.x[:, 1].cpu().numpy() * 768
+
+
+
+    ax.plot(x_coords[:50], y_coords[:50], color='gray', lw=0.5, alpha=0.4)
+
+    sc1 = ax.scatter(x_coords, y_coords, s=20 + 200 * real_gnn_attn_norm, c=real_gnn_attn, cmap='plasma', edgecolors='white', lw=0.4)
+
+    ax.set_title('GNN Stream: Real Gating Attention')
+
+    ax.set_xlabel('FIX_X (pixels)')
+
+    ax.set_ylabel('FIX_Y (pixels)')
+
+    plt.colorbar(sc1, ax=ax, label='Attention Weight')
+
+
+
+    # Plot CEFAM Attention
+
+    ax = axes[1]
+
+    ax.set_facecolor('#F5F5F5')
+
+    ax.set_xlim(0, 1024)
+
+    ax.set_ylim(768, 0)
+
+    ax.plot(x_coords[:50], y_coords[:50], color='gray', lw=0.5, alpha=0.4)
+
+    sc2 = ax.scatter(x_coords, y_coords, s=20 + 200 * real_cefam_attn_norm[:len(x_coords)], c=real_cefam_attn[:len(x_coords)], cmap='viridis', edgecolors='white', lw=0.4)
+
+    ax.set_title('CEFAM: Real Cross-Attention (Expert ΓåÆ Graph)')
+
+    ax.set_xlabel('FIX_X (pixels)')
+
+    ax.set_ylabel('FIX_Y (pixels)')
+
+    plt.colorbar(sc2, ax=ax, label='Attention Weight')
+
+
+
+    plt.tight_layout()
+
+    plt.savefig(PROJECT_ROOT / 'results' / 'tier4_real_attention.png', bbox_inches='tight')
+
+    plt.show()
+
+    print('Γ£à Real attention extraction completed.')
+
+else:
+
+    print('ΓÜá∩╕Å Checkpoint not found; skipping real attention visualization.')
+
+
+
+=== Cell 44 (code) ===
+# ΓöÇΓöÇ 5A. Load tß║Ñt cß║ú OOF predictions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+import json
+import pandas as pd
+import numpy as np
+from sklearn.metrics import roc_curve, auc, roc_auc_score
+from sklearn.calibration import calibration_curve
+
+# 1. Tabular predictions (CatBoost - Best vs. XGBoost)
+df_t3_xgb = pd.read_csv(PROJECT_ROOT / 'results' / 'baselines_s42' / 'xgboost_oof_subject_preds.csv')[['Subject_ID', 'Label', 'Pred_Proba_Subject']]
+df_t3_xgb.columns = ['Subject_ID', 'Label', 'P_XGB']
+
+df_t3_cat = pd.read_csv(PROJECT_ROOT / 'results' / 'baselines_s42' / 'catboost_oof_subject_preds.csv')[['Subject_ID', 'Label', 'Pred_Proba_Subject']]
+df_t3_cat.columns = ['Subject_ID', 'Label', 'P_CAT']
+
+# 2. Deep learning predictions (CEFAM vs. BiCA-HS - Best)
+df_t4_cef = pd.read_csv(PROJECT_ROOT / 'results' / 'cefam_s42' / 'cefam_oof_subject_preds.csv')[['Subject_ID', 'Label', 'Pred_Proba_Subject']]
+df_t4_cef.columns = ['Subject_ID', 'Label', 'P_CEF']
+
+df_t4_bic = pd.read_csv(PROJECT_ROOT / 'results' / 'bica_s42' / 'bica_subject_val_predictions.csv')[['Subject_ID', 'Label', 'Pred_Proba_Subject']]
+df_t4_bic.columns = ['Subject_ID', 'Label', 'P_BIC']
+
+# Merge all predictions
+df_merged = df_t3_xgb.merge(df_t3_cat[['Subject_ID', 'P_CAT']], on='Subject_ID') \
+                     .merge(df_t4_cef[['Subject_ID', 'P_CEF']], on='Subject_ID') \
+                     .merge(df_t4_bic[['Subject_ID', 'P_BIC']], on='Subject_ID')
+print(f'Aligned subjects: {len(df_merged)}')
+
+y_true = df_merged['Label'].values
+p_xgb = df_merged['P_XGB'].values
+p_cat = df_merged['P_CAT'].values
+p_cef = df_merged['P_CEF'].values
+p_bic = df_merged['P_BIC'].values
+
+# Load Meta-Learner (CatBoost + BiCA-HS) coefficients
+with open(PROJECT_ROOT / 'results' / 'tier5_s42' / 'tier5_meta_learner.json') as f:
+    meta_config = json.load(f)
+
+strategy = meta_config.get('selected_strategy', 'weighted_average')
+print(f'Chiß║┐n l╞░ß╗úc Tier 5 ─æ╞░ß╗úc chß╗ìn (CatBoost + BiCA-HS): {strategy}')
+
+if strategy == 'logistic_regression':
+    lr_cfg = meta_config['logistic_regression']
+    coef_tab = lr_cfg['coef_tab']
+    coef_bica = lr_cfg['coef_bica']
+    bias = lr_cfg['bias']
+    logit = coef_tab * p_cat + coef_bica * p_bic + bias
+    p_t5 = 1 / (1 + np.exp(-logit))
+    print(f'  coef_tab={coef_tab:.4f}, coef_bica={coef_bica:.4f}, bias={bias:.4f}')
+else:
+    wa_cfg = meta_config.get('weighted_average', {})
+    w_tab = wa_cfg.get('w_tab', 0.5)
+    w_bica = wa_cfg.get('w_bica', 0.5)
+    p_t5 = w_tab * p_cat + w_bica * p_bic
+    print(f'  w_tab={w_tab:.4f}, w_bica={w_bica:.4f}')
+
+# GNN-CEFAM + XGBoost ensemble for comparison (using uniform 50/50 weights)
+p_t5_cefam = 0.5 * p_xgb + 0.5 * p_cef
+
+auc_xgb = roc_auc_score(y_true, p_xgb)
+auc_cat = roc_auc_score(y_true, p_cat)
+auc_cef = roc_auc_score(y_true, p_cef)
+auc_bic = roc_auc_score(y_true, p_bic)
+auc_t5 = roc_auc_score(y_true, p_t5)
+auc_t5_cefam = roc_auc_score(y_true, p_t5_cefam)
+
+print(f'\nAUC XGBoost OOF:   {auc_xgb:.4f}')
+print(f'AUC CatBoost OOF:  {auc_cat:.4f} (Best Tabular)')
+print(f'AUC GNN-CEFAM OOF: {auc_cef:.4f}')
+print(f'AUC BiCA-HS OOF:   {auc_bic:.4f} (Best Deep Model)')
+print(f'AUC Tier 5 Ensemble (XGB+CEF):    {auc_t5_cefam:.4f}')
+print(f'AUC Tier 5 Ensemble (Cat+BiCA): {auc_t5:.4f} (Best Ensemble)')
+
+
+=== Cell 45 (code) ===
+# ΓöÇΓöÇ 5B. ROC Curves ΓÇö Multi-Tier Comparison ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+fig.suptitle('Tier 5 ΓÇö Meta-Learner Ensemble: ROC Curves & Calibration',
+
+             fontsize=14, fontweight='bold')
+
+
+
+ax = axes[0]
+
+
+
+# SOTA reference line
+
+SOTA_AUC = 0.8854
+
+ax.axhline(y=SOTA_AUC, color=COLOR_SOTA, ls=':', lw=2, alpha=0.8,
+
+           label=f'SOTA MSNet AUC = {SOTA_AUC:.4f} (Song et al., 2025)')
+
+
+
+for p, y, color, label, lw in [
+
+    (p_xgb, y_true, '#BCBD22', f'Tier 3 ΓÇö XGBoost (AUC={auc_xgb:.4f})', 1.2),
+
+    (p_cat, y_true, COLOR_T3, f'Tier 3 ΓÇö CatBoost (AUC={auc_cat:.4f})', 1.8),
+
+    (p_cef, y_true, '#17BECF', f'Tier 4 ΓÇö GNN-CEFAM (AUC={auc_cef:.4f})', 1.2),
+
+    (p_bic, y_true, COLOR_T4, f'Tier 4 ΓÇö BiCA-HS (AUC={auc_bic:.4f})', 1.8),
+
+    (p_t5_cefam, y_true, '#E377C2', f'Tier 5 ΓÇö Ensemble (XGB+CEF) (AUC={auc_t5_cefam:.4f})', 1.5),
+
+    (p_t5, y_true, COLOR_T5, f'Tier 5 ΓÇö Ensemble (Cat+BiCA) (AUC={auc_t5:.4f})', 2.5),
+
+]:
+
+    fpr, tpr, _ = roc_curve(y, p)
+
+    ax.plot(fpr, tpr, color=color, lw=lw, label=label)
+
+
+
+ax.plot([0,1], [0,1], 'k--', lw=0.8, alpha=0.4, label='Random (AUC = 0.50)')
+
+ax.set_xlabel('False Positive Rate (1 - Specificity)')
+
+ax.set_ylabel('True Positive Rate (Sensitivity)')
+
+ax.set_title('ROC Curves: Individual Tiers vs. Best Ensemble & SOTA')
+
+ax.legend(fontsize=8, loc='lower right')
+
+ax.set_xlim(-0.01, 1.01)
+
+ax.set_ylim(-0.01, 1.01)
+
+
+
+# Th├¬m shaded area cho Tier 5
+
+fpr5, tpr5, _ = roc_curve(y_true, p_t5)
+
+ax.fill_between(fpr5, 0, tpr5, color=COLOR_T5, alpha=0.06)
+
+
+
+# AUC improvement annotation
+
+ax.annotate(f'Best Ensemble vs SOTA\n╬ö AUC = +{auc_t5-SOTA_AUC:.4f}',
+
+            xy=(0.65, 0.45), fontsize=9,
+
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#EDE7F6', alpha=0.9),
+
+            color='#4A148C')
+
+
+
+# ΓöÇΓöÇ 5C. Calibration Curve (Reliability Diagram) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+ax = axes[1]
+
+ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.6, label='Perfectly calibrated')
+
+
+
+for p, color, name in [
+
+    (p_cat, COLOR_T3, 'Tier 3 ΓÇö CatBoost'),
+
+    (p_bic, COLOR_T4, 'Tier 4 ΓÇö BiCA-HS'),
+
+    (p_t5, COLOR_T5, 'Tier 5 ΓÇö Ensemble (Cat+BiCA)'),
+
+]:
+
+    prob_true, prob_pred = calibration_curve(y_true, p, n_bins=8, strategy='quantile')
+
+    ece = np.mean(np.abs(prob_true - prob_pred))
+
+    ax.plot(prob_pred, prob_true, marker='o', color=color, lw=2,
+
+            label=f'{name} (ECE={ece:.3f})')
+
+    ax.fill_between(prob_pred, prob_pred, prob_true, alpha=0.07, color=color)
+
+
+
+ax.set_xlabel('Mean Predicted Probability')
+
+ax.set_ylabel('Fraction of Positives (True Probability)')
+
+ax.set_title('Reliability Diagram ΓÇö Calibration Quality\n(Gß║ºn ─æ╞░ß╗¥ng ch├⌐o = tß╗æt h╞ín)')
+
+ax.legend(fontsize=8)
+
+ax.set_xlim(-0.05, 1.05)
+
+ax.set_ylim(-0.05, 1.05)
+
+
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier5_comprehensive_eval.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 46 (code) ===
+# ΓöÇΓöÇ 5D. Multi-Seed Stability Bar Chart ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+seeds = ['s42', 's123', 's456']
+rows = []
+
+for seed in seeds:
+    for tier, path_tpl in [
+        ('Tier 3 XGB',  f'baselines_{seed}/xgboost_results_summary.json'),
+        ('Tier 4 BiCA', f'bica_{seed}/bica_results_summary.json'),
+        ('Tier 5',      f'tier5_{seed}/tier5_results_summary.json'),
+    ]:
+        fp = PROJECT_ROOT / 'results' / path_tpl
+        if not fp.exists():
+            continue
+        with open(fp) as f:
+            d = json.load(f)
+
+        if tier == 'Tier 3 XGB':
+            auc_val = d.get('subject_level', {}).get('auc', np.nan)
+            acc_val = d.get('subject_level', {}).get('accuracy', np.nan)
+        elif tier == 'Tier 4 BiCA':
+            auc_val = d.get('overall', {}).get('auc', np.nan)
+            acc_val = d.get('overall', {}).get('accuracy', np.nan)
+        elif tier == 'Tier 5':
+            auc_val = d.get('tier5_metrics', {}).get('auc', np.nan)
+            acc_val = d.get('tier5_metrics', {}).get('accuracy', np.nan)
+
+        rows.append({'Seed': seed, 'Model': tier, 'AUC': auc_val, 'ACC': acc_val})
+
+df_perf = pd.DataFrame(rows)
+print(df_perf.to_string(index=False))
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+fig.suptitle('Tier 5 ΓÇö Multi-Seed Stability: AUC & Accuracy per Model',
+             fontsize=13, fontweight='bold')
+
+for ax, metric in zip(axes, ['AUC', 'ACC']):
+    pivot = df_perf.pivot(index='Seed', columns='Model', values=metric)
+    pivot.plot(kind='bar', ax=ax, edgecolor='white', width=0.7)
+
+    # SOTA reference
+    sota_val = SOTA_AUC if metric == 'AUC' else 0.8125
+    ax.axhline(sota_val, color=COLOR_SOTA, ls='--', lw=1.5, alpha=0.8,
+               label=f'SOTA MSNet ({sota_val:.4f})')
+    ax.set_ylabel(metric)
+    ax.set_xlabel('Random Seed')
+    ax.set_title(f'{metric} ΓÇö 3 Seeds Comparison')
+    ax.tick_params(axis='x', rotation=0)
+    ax.legend(fontsize=8)
+    if metric == 'AUC':
+        ax.set_ylim(0.75, 1.0)
+    else:
+        ax.set_ylim(0.70, 1.0)
+
+plt.tight_layout()
+plt.savefig(PROJECT_ROOT / 'results' / 'tier5_multiseed_stability.png', bbox_inches='tight')
+plt.show()
+
+=== Cell 47 (code) ===
+# ΓöÇΓöÇ 5E. Final Performance Summary Table ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+
+rows_summary = []
+for p, name in [
+    (p_xgb, 'Tier 3 ΓÇö XGBoost OOF (s42)'),
+    (p_cat, 'Tier 3 ΓÇö CatBoost OOF (s42)'),
+    (p_cef, 'Tier 4 ΓÇö GNN-CEFAM OOF (s42)'),
+    (p_bic, 'Tier 4 ΓÇö BiCA-HS OOF (s42)'),
+    (p_t5_cefam, 'Tier 5 ΓÇö Ensemble (XGB+CEF) (s42)'),
+    (p_t5, 'Tier 5 ΓÇö Ensemble (Cat+BiCA) (s42)'),
+]:
+    y_pred = (p >= 0.5).astype(int)
+    tn, fp_, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    rows_summary.append({
+        'Model': name,
+        'AUC': roc_auc_score(y_true, p),
+        'ACC': accuracy_score(y_true, y_pred),
+        'F1':  f1_score(y_true, y_pred),
+        'Sensitivity': tp/(tp+fn),
+        'Specificity': tn/(tn+fp_),
+    })
+
+rows_summary.append({
+    'Model': '--- SOTA MSNet (Song et al., 2025) ---',
+    'AUC': 0.8854, 'ACC': 0.8125, 'F1': np.nan,
+    'Sensitivity': np.nan, 'Specificity': np.nan
+})
+
+df_summary = pd.DataFrame(rows_summary)
+df_summary = df_summary.set_index('Model')
+print('\n' + '='*80)
+print('FINAL PERFORMANCE SUMMARY')
+print('='*80)
+print(df_summary.to_string(float_format='{:.4f}'.format))
+print('='*80)
+
+
+=== Cell 49 (code) ===
+# ΓöÇΓöÇ 5F. 2D Decision Space Scatter ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+fig, ax = plt.subplots(figsize=(8, 7))
+
+
+
+hc_mask = y_true == 0
+
+sz_mask = y_true == 1
+
+
+
+# Scatter points
+
+ax.scatter(p_cat[hc_mask], p_bic[hc_mask], c=COLOR_HC, alpha=0.75, s=60, edgecolors='white', label='HC (Healthy Control)')
+
+ax.scatter(p_cat[sz_mask], p_bic[sz_mask], c=COLOR_SZ, alpha=0.75, s=60, edgecolors='white', label='SZ (Schizophrenia)')
+
+
+
+# Draw meta-learner decision boundary
+
+p_x = np.linspace(0, 1, 100)
+
+if strategy == 'logistic_regression':
+
+    p_y = (-bias - coef_tab * p_x) / coef_bica
+
+    boundary_label = f'Logistic Regression Boundary\n({coef_tab:.2f}*P_tab + {coef_bica:.2f}*P_deep {bias:+.2f} = 0)'
+
+else:
+
+    p_y = (0.5 - w_tab * p_x) / w_bica
+
+    boundary_label = f'Weighted Average Boundary\n({w_tab:.2f}*P_tab + {w_bica:.2f}*P_deep = 0.5)'
+
+
+
+ax.plot(p_x, p_y, color='purple', lw=2, ls='--', label=boundary_label)
+
+
+
+# Draw individual threshold lines at 0.5
+
+ax.axvline(0.5, color='gray', ls=':', lw=1, alpha=0.7, label='Tabular Threshold (0.5)')
+
+ax.axhline(0.5, color='gray', ls=':', lw=1, alpha=0.7, label='Deep Model Threshold (0.5)')
+
+
+
+ax.set_xlim(-0.05, 1.05)
+
+ax.set_ylim(-0.05, 1.05)
+
+ax.set_xlabel('P(SZ | Tabular: CatBoost)')
+
+ax.set_ylabel('P(SZ | Deep: BiCA-HS)')
+
+ax.set_title('Tier 5 ΓÇö 2D Ensemble Decision Space & Meta-Learner Boundary\n(C├íc v├╣ng lß╗çch nhau thß╗â hiß╗çn sß╗▒ bß╗ò trß╗ú lß║½n nhau cß╗ºa Tabular & Deep)', fontsize=12, fontweight='bold')
+
+ax.legend(loc='lower left', fontsize=8.5)
+
+ax.grid(True, alpha=0.2)
+
+
+
+plt.tight_layout()
+
+plt.savefig(PROJECT_ROOT / 'results' / 'tier5_decision_space_2d.png', bbox_inches='tight')
+
+plt.show()
+
+
+
+=== Cell 51 (code) ===
+# ΓöÇΓöÇ Final Summary Figure ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+print('\n' + '='*60)
+
+print('NOTEBOOK HO├ÇN Tß║ñT')
+
+print('='*60)
+
+
+
+saved_files = [
+
+    'results/tier1_spatial_filter.png',
+
+    'results/tier1_temporal_filter.png',
+
+    'results/tier1_2d_filtering.png',
+
+    'results/tier1_pupil_dynamics.png',
+
+    'results/tier2_feature_violin.png',
+
+    'results/tier2_correlation_heatmap.png',
+
+    'results/tier2_delta_density.png',
+
+    'results/tier2_delta_mechanism.png',
+
+    'results/tier3_feature_importance.png',
+
+    'results/tier3_catboost_importance.png',
+
+    'results/tier3_tabular_comparison.png',
+
+    'results/tier3_oof_eval.png',
+
+    'results/tier3_shap_summary.png',
+
+    'results/tier4_scanpath_attention.png',
+
+    'results/tier4_real_attention.png',
+
+    'results/tier4_graph_topology.png',
+
+    'results/tier4_resnet_tsne.png',
+
+    'results/tier5_comprehensive_eval.png',
+
+    'results/tier5_multiseed_stability.png',
+
+    'results/tier5_decision_space_2d.png',
+
+]
+
+
+
+print('\nFile ─æ├ú l╞░u:')
+
+for f in saved_files:
+
+    fp = PROJECT_ROOT / f
+
+    status = 'Γ£à' if fp.exists() else 'ΓÜá∩╕Å  (ch╞░a tß║ío/sß║╜ tß║ío khi chß║íy notebook)'
+
+    print(f'  {status} {f}')
+
+
+

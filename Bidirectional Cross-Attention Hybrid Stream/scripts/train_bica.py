@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from src.tier3_tabular.group_kfold import get_subject_folds
 from src.models.bica.model import BiCAHSModel
 from src.tier4_advanced.focal_loss import FocalLossWithEntropyReg
+from scripts.train_tier4 import build_flat_features_dict
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -46,25 +47,40 @@ def calculate_metrics(y_true, y_pred_proba):
         "specificity": spec
     }
 
+def renormalize_bica_trials(trials, global_mean, global_std, fold_mean, fold_std):
+    """
+    Renormalizes pupil features in BiCA trials fold-wise to prevent global normalisation leakage.
+    t['seq'] column 4: pupil size.
+    """
+    renormalized = []
+    for t in trials:
+        t_new = t.copy()
+        seq = t_new['seq'].copy()
+        mask = t_new['mask']
+        
+        # Backproject globally normalized pupil (column 4) to raw, and normalize with fold stats
+        pupil_global = seq[:, 4]
+        pupil_fold = (pupil_global * (global_std / (fold_std + 1e-8))) + ((global_mean - fold_mean) / (fold_std + 1e-8))
+        
+        # Zero out padding elements
+        pupil_fold[~mask] = 0.0
+        seq[:, 4] = pupil_fold
+        t_new['seq'] = seq
+        renormalized.append(t_new)
+    return renormalized
+
 class BiCADataset(Dataset):
     """
     Sequence dataset for BiCA-HS.
     """
-    def __init__(self, df_fixations, df_stim, feature_cols, max_seq_len=200, pupil_mean=0.0, pupil_std=1.0):
+    def __init__(self, df_fixations, flat_features_dict, max_seq_len=200, pupil_mean=0.0, pupil_std=1.0):
         self.max_seq_len = max_seq_len
-        self.feature_cols = feature_cols
         
         # Group fixations by Subject_ID and IMAGE (Stimulus_ID)
         self.trials = []
         grouped = df_fixations.groupby(['Subject_ID', 'IMAGE'])
         
-        # Create lookup for flat features: (Subject_ID, Stimulus_ID) -> row features
-        flat_features_dict = {}
-        for _, row in df_stim.iterrows():
-            s_id = int(row['Subject_ID'])
-            stim_id = row['Stimulus_ID']
-            flat_features_dict[(s_id, stim_id)] = row[feature_cols].values.astype(np.float32)
-            
+
         for (sub_id, img), df_trial in grouped:
             key = (int(sub_id), img)
             if key not in flat_features_dict:
@@ -144,7 +160,11 @@ def main():
     parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--seed", type=int, default=None, help="Override random seed")
+    parser.add_argument("--output_dir", type=str, default=None, help="Override output results directory")
     parser.add_argument("--overfit-batches", type=int, default=0, help="Sanity check: overfit to N batches")
+    parser.add_argument("--focal-alpha", type=float, default=None, help="Override Focal Loss alpha")
+    parser.add_argument("--focal-gamma", type=float, default=None, help="Override Focal Loss gamma")
+    parser.add_argument("--entropy-lambda", type=float, default=None, help="Override entropy regularization lambda")
     args = parser.parse_args()
     
     # 1. Load config
@@ -159,18 +179,32 @@ def main():
     if args.lr:
         config['training']['lr'] = args.lr
         
+    # Loss config overrides
+    if 'loss' not in config['training'] or not isinstance(config['training']['loss'], dict):
+        config['training']['loss'] = {}
+    if args.focal_alpha is not None:
+        config['training']['loss']['focal_alpha'] = args.focal_alpha
+    if args.focal_gamma is not None:
+        config['training']['loss']['focal_gamma'] = args.focal_gamma
+    if args.entropy_lambda is not None:
+        config['training']['loss']['entropy_lambda'] = args.entropy_lambda
+        
     seed = args.seed or config.get('seed', 42)
     set_seed(seed)
 
     # Paths — seed-specific subdirectory for non-default seeds
-    _default_seed = config.get('seed', 42)
-    _seed_suffix = f'_s{seed}' if seed != _default_seed else ''
-    _base_results = 'Bidirectional Cross-Attention Hybrid Stream/results/'
-    _base_ckpt = 'Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/'
-    results_dir = (config['paths'].get('log_dir', _base_results) if not _seed_suffix
-                   else _base_results.rstrip('/') + _seed_suffix + '/')
-    checkpoint_dir = (config['paths'].get('checkpoint_dir', _base_ckpt) if not _seed_suffix
-                      else _base_ckpt.rstrip('/') + _seed_suffix + '/')
+    if args.output_dir:
+        results_dir = args.output_dir
+        checkpoint_dir = os.path.join(args.output_dir, 'checkpoints')
+    else:
+        _default_seed = config.get('seed', 42)
+        _seed_suffix = f'_s{seed}' if seed != _default_seed else ''
+        _base_results = 'Bidirectional Cross-Attention Hybrid Stream/results/'
+        _base_ckpt = 'Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/'
+        results_dir = (config['paths'].get('log_dir', _base_results) if not _seed_suffix
+                       else _base_results.rstrip('/') + _seed_suffix + '/')
+        checkpoint_dir = (config['paths'].get('checkpoint_dir', _base_ckpt) if not _seed_suffix
+                          else _base_ckpt.rstrip('/') + _seed_suffix + '/')
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -190,6 +224,7 @@ def main():
     df_fixations = pd.read_parquet(parquet_path)
     
     features_path = data_config.get('features_stimulus_path', 'data/processed/features_stimulus_level.csv')
+    features_subject_path = data_config.get('features_subject_path', 'data/processed/features_subject_level.csv')
     print(f"Loading flat stimulus-level features from {features_path}...")
     df_stim = pd.read_csv(features_path)
     
@@ -198,23 +233,28 @@ def main():
     df_cat = pd.read_csv(categories_path)
     category_map = dict(zip(df_cat['Image_Name'], df_cat['Category']))
     
-    # Extract features column names
+    # Extract features column names and build flat 135 features
     meta_cols = ['Subject_ID', 'Stimulus_ID', 'Label', 'Is_Test']
     feature_cols = [col for col in df_stim.columns if col not in meta_cols]
     
+    flat_features_dict, handcrafted_dim, delta_cols = build_flat_features_dict(
+        df_stim, feature_cols, features_subject_path
+    )
+    print(f"Handcrafted feature dimension: {handcrafted_dim} "
+          f"({len(feature_cols)} stimulus + {len(delta_cols)} delta)")
+    
     # Calculate global pupil stats for normalization
-    pupil_mean = df_fixations['FIX_PUPIL'].mean()
-    pupil_std = df_fixations['FIX_PUPIL'].std()
+    global_pupil_mean = df_fixations['FIX_PUPIL'].mean()
+    global_pupil_std = df_fixations['FIX_PUPIL'].std()
     
     # Create complete dataset
     max_seq_len = data_config.get('max_seq_len', 200)
     full_dataset = BiCADataset(
         df_fixations=df_fixations,
-        df_stim=df_stim,
-        feature_cols=feature_cols,
+        flat_features_dict=flat_features_dict,
         max_seq_len=max_seq_len,
-        pupil_mean=pupil_mean,
-        pupil_std=pupil_std
+        pupil_mean=global_pupil_mean,
+        pupil_std=global_pupil_std
     )
     
     # Get subject folds
@@ -266,6 +306,19 @@ def main():
         train_list = [t for t in train_valid_trials if subject_to_fold[t['subject_id']] != fold]
         val_list = [t for t in train_valid_trials if subject_to_fold[t['subject_id']] == fold]
         
+        # Compute fold-specific pupil statistics using train subjects of this fold
+        train_subjects = [s_id for s_id, f in subject_to_fold.items() if f != fold]
+        df_train_pupil = df_fixations[df_fixations['Subject_ID'].isin(train_subjects)]
+        fold_pupil_mean = df_train_pupil['FIX_PUPIL'].mean()
+        fold_pupil_std = df_train_pupil['FIX_PUPIL'].std()
+        print(f"Fold {fold} training pupil stats: Mean={fold_pupil_mean:.4f}, Std={fold_pupil_std:.4f}")
+        
+        # Dynamically renormalize trials to eliminate pupil normalisation leakage
+        train_list = renormalize_bica_trials(
+            train_list, global_pupil_mean, global_pupil_std, fold_pupil_mean, fold_pupil_std)
+        val_list = renormalize_bica_trials(
+            val_list, global_pupil_mean, global_pupil_std, fold_pupil_mean, fold_pupil_std)
+        
         print(f"Train trials: {len(train_list)}, Val trials: {len(val_list)}")
         
         batch_size = training_config.get('batch_size', 16)
@@ -273,14 +326,15 @@ def main():
         val_loader = DataLoader(CustomDataset(val_list), batch_size=batch_size, shuffle=False)
         
         # Model, Loss, Optimizer
-        d_bio = len(feature_cols)
+        d_bio = handcrafted_dim
         model = BiCAHSModel(d_bio=d_bio, config=config).to(device)
         
         # Use Focal Loss with attention regularization
+        loss_cfg = training_config.get('loss', {})
         criterion = FocalLossWithEntropyReg(
-            alpha=0.5,  # Balanced for diagnostic recall
-            gamma=2.0,
-            entropy_lambda=0.01
+            alpha=loss_cfg.get('focal_alpha', 0.5),  # Balanced for diagnostic recall
+            gamma=loss_cfg.get('focal_gamma', 2.0),
+            entropy_lambda=loss_cfg.get('entropy_lambda', 0.01)
         )
         
         optimizer = torch.optim.AdamW(
@@ -523,13 +577,23 @@ def main():
                 print(f"  Fold {fold}: checkpoint not found at {ckpt}, skipping.")
                 continue
 
-            d_bio = len(feature_cols)
+            d_bio = handcrafted_dim
             m = BiCAHSModel(d_bio=d_bio, config=config).to(device)
             m.load_state_dict(torch.load(ckpt, map_location=device))
             m.eval()
 
+            # Compute fold-specific pupil statistics using train subjects of this fold
+            train_subjects = [s_id for s_id, f in subject_to_fold.items() if f != fold]
+            df_train_pupil = df_fixations[df_fixations['Subject_ID'].isin(train_subjects)]
+            fold_pupil_mean = df_train_pupil['FIX_PUPIL'].mean()
+            fold_pupil_std = df_train_pupil['FIX_PUPIL'].std()
+            
+            # Renormalize test trials for this fold model to eliminate leakage and distribution mismatch
+            fold_test_trials = renormalize_bica_trials(
+                test_trials, global_pupil_mean, global_pupil_std, fold_pupil_mean, fold_pupil_std)
+
             test_loader = DataLoader(
-                CustomDataset(test_trials),
+                CustomDataset(fold_test_trials),
                 batch_size=training_config.get('batch_size', 16),
                 shuffle=False)
             fold_subj_preds = []

@@ -1,0 +1,8 @@
+﻿ 17: if 'google.colab' in sys.modules or os.path.exists('/content/drive'):
+ 19:         from google.colab import drive
+ 20:         if not os.path.exists('/content/drive/MyDrive'):
+ 21:         drive.mount('/content/drive')
+ 26:     PROJECT_ROOT = Path('/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition')
+ 29:     PROJECT_ROOT = Path(os.getcwd())
+ 31: sys.path.insert(0, str(PROJECT_ROOT))
+ 43: print('Γ£à Setup ho├án tß║Ñt ΓÇö PROJECT_ROOT:', PROJECT_ROOT)

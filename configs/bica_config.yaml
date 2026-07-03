@@ -95,8 +95,7 @@ data:
         - sacc_amplitude_mean
         - sacc_amplitude_max
         - sacc_amplitude_std
-        - sacc_velocity_mean
-        - sacc_velocity_peak
+        - sa_fdr_mean
         - sacc_count
         - sacc_duration_mean
         - sacc_dir_entropy
@@ -192,10 +191,10 @@ training:
 
 # ----- Evaluation -----
 evaluation:
-  cv_folds: 5
-  cv_type: stratified
+  cv_folds: 4
+  cv_type: group_kfold
   split_level: subject
-  seeds: [42, 123, 456, 789, 2026]
+  seeds: [42, 123, 456]
   metrics:
     - accuracy
     - auc

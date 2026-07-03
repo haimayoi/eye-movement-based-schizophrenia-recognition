@@ -1,0 +1,55 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows, arrows.meta, positioning, calc}
+
+\newcommand{\rev}[1]{\textcolor{blue}{#1}}
+
+% When compiling locally: figures are searched in ../results/ and ../experiments/ablation/figures/
+% When uploading to Overleaf: copy all referenced .png files into the same folder as main.tex
+\graphicspath{{../results/}{../experiments/ablation/figures/}{../results/tier5_bica_s42/figures/}}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{X}}}
+
+\begin{document}
+
+\title{Hierarchical Multi-Stream Learning for Eye Movement-Based Schizophrenia Recognition: From Handcrafted Features to Bidirectional Graph--Transformer Ensembles}
+
+\author{Ha-Hai-Van Le$^{1}$, Minh-Tuyen Pham$^{1}$, Hoang-Giang Bui$^{1}$,
+        Supervisor: Thanh-Hai Tran$^{1}$, Hanh-Trang Bui$^{1}$\\
+$^{1}$School of Electrical and Electronic Engineering\\
+Hanoi University of Science and Technology, Hanoi, Vietnam\\
+Email: van.lhh233886@sis.hust.edu.vn}
+
+\maketitle
+
+\begin{abstract}
+\rev{Schizophrenia recognition from free-viewing eye movements lacks integration between clinical biomarkers and sequence learning. We propose a Hierarchical 5-Tier Framework evaluated on the EMS dataset (208 subjects, EyeLink 1000 Plus 1000\,Hz). The pipeline scales from preprocessing (Tier~1) and feature engineering of stimulus-level and category-wise contrastive delta features (Tier~2) to tabular baselines (Tier~3), parallel deep sequential architectures (Tier~4), and meta-learner ensembling (Tier~5). In Tier~4 we develop two architectures: GNN-CEFAM, a Graph Attention Network with ResNet50-enriched node features ($\mathbb{R}^{69}$) and a Cross-Attention Enhanced Fusion Module; and BiCA-HS, a 4-layer Transformer encoder fused with a 135-dimensional clinical expert stream via bidirectional cross-attention. Both architectures exceed the published performance of the state-of-the-art MSNet baseline (reported test AUC\,=\,0.8854). BiCA-HS achieves an out-of-fold AUC of $0.9549 \pm 0.0039$ (mean $\pm$ std, 3 seeds), and the Tier~5 logistic regression meta-learner reaches AUC\,=\,$0.9590 \pm 0.0009$, improving clinical sensitivity to $88.8 \pm 3.1\%$.}
+\end{abstract}
+
+\begin{IEEEkeywords}
+schizophrenia, eye movement, scanpath, graph attention network, transformer, cross-attention, ensemble learning, clinical biomarkers.
+\end{IEEEkeywords}
+
+\input{sections/introduction}
+\input{sections/related_work}
+\input{sections/features}
+\input{sections/methodology}
+\input{sections/experiments}
+\input{sections/conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

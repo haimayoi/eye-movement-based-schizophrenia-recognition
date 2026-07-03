@@ -312,6 +312,12 @@ def main():
         json.dump(summary, f, indent=4)
     print(f"\n[Tier5] Saved results summary to {summary_path}")
 
+    # Save OOF subject predictions for bootstrap significance testing
+    df_meta['Pred_Proba_Subject'] = p_oof
+    oof_path = os.path.join(args.output_dir, "tier5_oof_subject_preds.csv")
+    df_meta.to_csv(oof_path, index=False)
+    print(f"[Tier5] Saved OOF subject predictions to {oof_path}")
+
     print("\n" + "=" * 65)
     print(f" Tier 3  AUC: {auc_t3:.4f}")
     print(f" Tier 4  AUC: {auc_t4:.4f}")

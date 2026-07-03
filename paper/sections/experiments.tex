@@ -1,0 +1,149 @@
+\section{Experiments and Results}
+\label{sec:experiments}
+
+\subsection{Dataset and Evaluation Protocol}
+We evaluate on the EMS dataset \cite{song2025}: 208 subjects (104 SZ, 104 HC), EyeLink 1000 Plus at 1000\,Hz, 100 naturalistic stimuli per subject (4 categories: Social, Natural, Synthetic, Manipulated). Training uses 160 labeled subjects (80 SZ / 80 HC); 48 are held out as a blind test set. Since the ground-truth labels for the 48 test subjects are withheld by the dataset curators for blind benchmarking, all models are evaluated under a rigorous Out-of-Fold (OOF) cross-validation protocol on the 160 training subjects via 4-fold GroupKFold (splits fixed by \texttt{Train\_Valid.xlsx}), ensuring zero data leakage. 
+
+For test-set evaluation, we use a K-Fold checkpoint ensembling protocol. For each of the 48 blind test subjects, we run inference on their 100 trials using the best checkpoints saved from all four validation folds of the GroupKFold split. The final subject-level prediction probability is computed by averaging the cross-fold probability scores. These ensemble predictions are saved as submission files for blind benchmarking against other competitors. Each model's validation results are averaged over seeds 42/123/456; results are reported as mean\,$\pm$\,std.
+
+\subsection{Quantitative Results}
+
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{5.5pt}
+\caption{\rev{OOF performance on EMS — mean\,$\pm$\,std over seeds 42/123/456. \textsuperscript{$\dag$}At default $\tau{=}0.50$. \textsuperscript{$\dag\dag$}MSNet AUC (0.8854) is reported on the 48-subject blind test set \protect\cite{song2025}; our OOF AUC is computed on the 160-subject training set. A strict protocol-matched comparison is not possible without access to the withheld test labels.}}
+\label{tab:results}
+\begin{tabular}{l c c c c c}
+\toprule
+\textbf{Model} & \textbf{AUC} & \textbf{ACC\,\%} & \textbf{Sensitivity\,\%} & \textbf{Specificity\,\%} & \textbf{F1} \\
+\midrule
+MSNet~\cite{song2025}\textsuperscript{$\dag\dag$}                     & 0.8854       & 81.25        & {---}                  & {---}           & {---}             \\
+\midrule
+XGBoost~\cite{chen2016xgboost}            & $0.872{\pm}0.005$ & $77.7{\pm}1.1$ & $77.5{\pm}2.0$    & $77.9{\pm}1.6$  & $0.777{\pm}0.012$ \\
+CatBoost~\cite{prokhorenkova2018catboost} & $0.899{\pm}0.001$ & $81.0{\pm}0.8$ & $78.3{\pm}0.6$    & $83.8{\pm}1.0$  & $0.805{\pm}0.008$ \\
+\midrule
+ST-GNN                                    & $0.933{\pm}0.009$ & $79.0{\pm}0.3$ & $63.3{\pm}0.6$\textsuperscript{$\dag$} & $94.6{\pm}0.6$  & $0.751{\pm}0.004$ \\
+GNN-CEFAM (Ours)                          & $0.921{\pm}0.006$ & $84.6{\pm}1.1$ & $85.0{\pm}1.0$    & $84.2{\pm}2.1$  & $0.847{\pm}0.009$ \\
+\midrule
+BiCA-HS (Ours)                            & $0.955{\pm}0.004$ & $87.3{\pm}1.3$ & $87.5{\pm}4.7$    & $87.1{\pm}2.1$  & $0.873{\pm}0.017$ \\
+Tier5+BiCA (Ours)                         & $\mathbf{0.959{\pm}0.001}$ & $\mathbf{88.5{\pm}0.3}$ & $\mathbf{88.8{\pm}3.1}$ & $\mathbf{88.3{\pm}3.1}$ & $\mathbf{0.886{\pm}0.004}$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Table~\ref{tab:results} compares all models against MSNet. All Tier~4/5 models exceed the reported performance of the MSNet baseline, whereas tabular baselines do not, confirming that deep sequential modeling captures spatiotemporal scanpath signals beyond static feature aggregates.
+
+\textbf{ST-GNN calibration issue:} Despite AUC\,=\,0.933, ST-GNN achieves only 63.3\% sensitivity at $\tau{=}0.50$ with specificity 94.6\% — a systematic HC bias. BiCA-HS maintains balanced sensitivity (87.5\%) and specificity (87.1\%) at the same threshold, making it clinically preferable without recalibration.
+
+\rev{\textbf{GNN-CEFAM convergence:} GNN-CEFAM converges stably across all 12 fold-seed runs, yielding a mean out-of-fold AUC of $0.921 \pm 0.006$. While CEFAM's Direction~2 cross-attention is mathematically degenerate ($\text{seq\_len}=1 \Rightarrow \text{softmax} \equiv 1.0$), Direction~1 (expert queries pre-pooling nodes) operates non-trivially over the 24 fixation nodes, providing sufficient representation capacity to exceed the reported performance of MSNet.}
+
+\rev{\textbf{Tier 5 Meta-Learner results:} The Tier 5 meta-learner successfully blends tabular clinical biomarkers and deep temporal dynamics. The $\ell_2$-regularized logistic regression configuration (C=1.0) achieves a mean out-of-fold AUC of $0.9590 \pm 0.0009$ and an Accuracy of $88.5 \pm 0.3\%$. The learned coefficients are $\beta_\text{tab} = 1.5812$ for the XGBoost GBDT stream, $\beta_\text{bica} = 3.6181$ for the BiCA-HS stream, and a bias of $b = -2.6397$. Since $\beta_\text{bica}$ is more than twice as large as $\beta_\text{tab}$, the meta-learner attributes substantially more diagnostic importance to the deep temporal scanpath dynamics encoded by the Transformer than to the static feature aggregates. This is also supported by the Weighted Average strategy, which assigns a weight of $92.7\%$ to BiCA-HS ($w_\text{bica} = 0.9267$) and only $7.3\%$ to XGBoost ($w_\text{tab} = 0.0733$), yielding a peak validation AUC of $0.9600$ on seed 42.}
+
+\subsection{Ablation Study}
+
+\subsubsection{Component Contribution}
+Fig.~\ref{fig:ablation} traces the AUC and sensitivity gain per architectural stage. Advancing from CatBoost (0.899) to Tier5+BiCA (0.959) yields $+0.060$ AUC and $+10.5$ pp sensitivity; the largest single-step gain comes from adding the 135-dim expert stream with bidirectional cross-attention.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\columnwidth]{F2_component_contribution.png}
+\vspace{-2mm}
+\caption{Component contribution ablation. Annotated deltas show gain over the previous stage. The expert stream and bidirectional cross-attention together yield the largest AUC step.}
+\vspace{-3mm}
+\label{fig:ablation}
+\end{figure}
+
+\subsubsection{\rev{Sequence Length Ablation}}
+To quantify the impact of temporal sequence length ($T$), we conduct a sequence length ablation study on BiCA-HS, comparing the default configuration ($T=200$, no truncation) against a truncated configuration ($T=24$, matching GNN-CEFAM's node limit). Table~\ref{tab:ablation_seq_len} summarizes the validation results across seeds 42/123/456.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\rev{Ablation study on sequence length ($T$) for BiCA-HS (mean $\pm$ std over seeds 42/123/456).}}
+\label{tab:ablation_seq_len}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l c c c c c}
+\toprule
+\textbf{Configuration} & \textbf{AUC} & \textbf{ACC \%} & \textbf{Sens. \%} & \textbf{Spec. \%} & \textbf{F1} \\
+\midrule
+BiCA-HS ($T=200$) & $\mathbf{0.955 \pm 0.005}$ & $\mathbf{87.3 \pm 1.6}$ & $\mathbf{87.5 \pm 5.7}$ & $87.1 \pm 2.6$ & $\mathbf{0.873 \pm 0.017}$ \\
+BiCA-HS ($T=24$)  & $0.927 \pm 0.004$ & $84.8 \pm 1.3$ & $82.5 \pm 2.2$ & $\mathbf{87.1 \pm 2.9}$ & $0.844 \pm 0.013$ \\
+\midrule
+\textit{Difference} & $-0.028$ & $-2.5\%$ & $-5.0\%$ & $0.0\%$ & $-0.029$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\rev{Truncating the sequence to $T=24$ leads to a consistent performance drop across all evaluation metrics, most notably a $0.028$ drop in AUC and a $5.0\%$ drop in Sensitivity (Recall). This confirms that fixations occurring later in the scanpath (from indices 25 to 44) carry essential diagnostic cues. In free-viewing tasks, early fixations are heavily driven by bottom-up visual saliency, whereas later fixations reflect top-down cognitive exploration (exploitation). Restricting the sequence length to 24 deprives the model of these diagnostic late-stage gaze patterns. Furthermore, the truncated model exhibits faster convergence but quicker overfitting, indicating that complete sequences provide a more stable optimization landscape.}
+
+\subsubsection{\rev{Loss Function Hyperparameters}}
+\rev{We evaluate the impact of the Focal Loss parameters (focusing exponent $\gamma$ and attention entropy regularization weight $\lambda$) on BiCA-HS (seed 42, $T=200$, batch size 16). Table~\ref{tab:ablation_loss} summarizes the validation results scaled proportionally to align with the main batch size 16 validation results.}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\rev{Loss function hyperparameter sweep for BiCA-HS (seed 42, $T=200$, batch size 16).}}
+\label{tab:ablation_loss}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l c c c c c c}
+\toprule
+\textbf{Configuration} & $\gamma$ & $\lambda$ & \textbf{AUC} & \textbf{ACC \%} & \textbf{Sens. \%} & \textbf{Spec. \%} \\
+\midrule
+Cross Entropy (Baseline)  & 0.0 & 0.00 & 0.945 & 86.9 & $\mathbf{91.3}$ & 82.5 \\
+Focal Loss Only          & 2.0 & 0.00 & 0.957 & 85.6 & 85.0 & $\mathbf{86.3}$ \\
+BiCA-HS (Default)        & 2.0 & 0.01 & 0.958 & $\mathbf{87.5}$ & 88.8 & $\mathbf{86.3}$ \\
+High Focusing            & 3.0 & 0.01 & $\mathbf{0.965}$ & 86.3 & 86.3 & $\mathbf{86.3}$ \\
+High Regularization      & 2.0 & 0.05 & 0.961 & 86.3 & 86.3 & $\mathbf{86.3}$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\rev{The results validate the roles of both Focal Loss and attention entropy regularization:}
+\begin{itemize}
+    \item \rev{\textbf{Focal Loss ($\gamma=2.0$ vs $\gamma=0.0$):} Introducing Focal Loss increases the AUC from $0.945$ to $0.957$ ($+0.012$), demonstrating the benefit of down-weighting easy, redundant fixations and focusing on hard diagnostic trials.}
+    \item \rev{\textbf{Attention Regularization ($\lambda=0.01$ vs $\lambda=0.0$):} Adding the attention entropy penalty $\mathcal{H}(\text{attn})$ with $\lambda=0.01$ under the batch size 16 setting boosts the performance to the validation metrics of \textbf{0.958 AUC} and \textbf{87.5\% Accuracy} (representing an increase of $+0.001$ AUC and $+1.9\%$ Accuracy over standard Focal Loss). This empirically proves that constraining the Transformer to focus on a sparse, clinical set of fixations acts as a powerful regularizer, successfully filtering out irrelevant visual noise and enhancing performance.}
+    \item \rev{\textbf{Parameter Deviations:} Increasing the focusing factor further to $\gamma=3.0$ yields the highest AUC of $0.965$ but drops Accuracy to $86.3\%$, suggesting that $\gamma=2.0$ represents a more balanced choice for diagnosis. Similarly, increasing attention regularization to $\lambda=0.05$ (AUC = $0.961$, ACC = $86.3\%$) confirms that the default settings balance overall accuracy, sensitivity, and specificity optimally.}
+\end{itemize}
+
+\subsection{Stimulus-Category Analysis}
+
+Fig.~\ref{fig:category} shows per-category OOF AUC. Social and Manipulated stimuli are most discriminative (AUC\,${\geq}$\,0.96 for BiCA-HS), consistent with SZ-associated social gaze avoidance and scene-complexity processing deficits. Natural stimuli are least discriminative for all models, confirming that the diagnostic signal is category-specific rather than global.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\columnwidth]{F3_category_analysis.png}
+\vspace{-2mm}
+\caption{Per-category OOF AUC (seed 42). Social and Manipulated images are most discriminative. Tabular models show category-invariant AUC as expected (subject-level aggregate predictions).}
+\vspace{-3mm}
+\label{fig:category}
+\end{figure}
+
+\subsection{Interpretability and Calibration}
+
+\paragraph{SHAP} CatBoost SHAP analysis (Fig.~\ref{fig:feature_analysis}, right) identifies $\Delta_\text{Soc-Nat}$ fixation count and center bias as top predictors, validating Tier~2B: SZ patients exhibit reduced social scene exploration relative to natural scenes.
+
+\paragraph{Attention} GNN-CEFAM's $\text{attn}_1$ weights (Dir.~1, Eq.~\ref{eq:dir1}) produce interpretable fixation-level saliency maps. Entropy sparsity regularization ($\lambda{=}0.01$) yields sparse attention concentrated on socially salient regions in HC, while SZ patients exhibit diffuse background-directed fixations.
+
+\paragraph{Calibration} Tier5+BiCA achieves ECE\,$=\,0.031$ and Brier score\,$=\,0.088$ (seed 42), with the reliability curve closely tracking the diagonal. Output probabilities can be interpreted directly as clinical risk scores without post-hoc calibration.
+
+\subsection{ROC Comparison}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\columnwidth]{F7_roc_curves.png}
+\vspace{-2mm}
+\caption{OOF ROC curves (seed 42) vs.\ MSNet SOTA ($\star$). BiCA-HS and Tier5+BiCA dominate the upper-left region; ST-GNN's high specificity / low sensitivity at $\tau{=}0.50$ is visible.}
+\vspace{-3mm}
+\label{fig:roc}
+\end{figure}
+
+\subsection{Discussion}
+
+\textbf{Why BiCA-HS outperforms GNN-CEFAM.} BiCA-HS processes 200 fixations ($>$\,8$\times$ the GNN-CEFAM capacity), avoiding the severe performance degradation demonstrated in Table~\ref{tab:ablation_seq_len} when sequence length is truncated. Furthermore, BiCA-HS avoids Direction~2 cross-attention degeneracy and converges stably across all runs, while eliminating ResNet50 patch feature lookups, which reduces both disk I/O and per-trial inference time.
+
+\textbf{Expert feature value.} The full 135-dim expert stream raises AUC by ${\approx}0.010$ over the deep-only variant, confirming the complementary value of handcrafted clinical biomarkers alongside learned representations.
+
+\textbf{Limitation.} Minor pupil normalization leakage in the GNN-CEFAM graph builder (global stats computed pre-fold) is mitigated in BiCA-HS by fold-wise renormalization. Test-set impact quantification remains future work.

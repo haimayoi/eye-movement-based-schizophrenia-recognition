@@ -21,20 +21,40 @@ RNG = np.random.default_rng(0)
 SEEDS = [42, 123, 456]
 
 MODELS = {
-    "BiCA-HS": {
-        42:  "results/bica_s42/bica_subject_val_predictions.csv",
-        123: "results/bica_s123/bica_subject_val_predictions.csv",
-        456: "results/bica_s456/bica_subject_val_predictions.csv",
+    "XGBoost": {
+        42:  "results/baselines_s42/xgboost_oof_subject_preds.csv",
+        123: "results/baselines_s123/xgboost_oof_subject_preds.csv",
+        456: "results/baselines_s456/xgboost_oof_subject_preds.csv",
+    },
+    "CatBoost": {
+        42:  "results/baselines_s42/catboost_oof_subject_preds.csv",
+        123: "results/baselines_s123/catboost_oof_subject_preds.csv",
+        456: "results/baselines_s456/catboost_oof_subject_preds.csv",
+    },
+    "ST-GNN": {
+        42:  "results/stgnn_s42/stgnn_oof_subject_preds.csv",
+        123: "results/stgnn_s123/stgnn_oof_subject_preds.csv",
+        456: "results/stgnn_s456/stgnn_oof_subject_preds.csv",
     },
     "GNN-CEFAM": {
         42:  "results/cefam_s42/cefam_oof_subject_preds.csv",
         123: "results/cefam_s123/cefam_oof_subject_preds.csv",
         456: "results/cefam_s456/cefam_oof_subject_preds.csv",
     },
-    "CatBoost": {
-        42:  "results/baselines_s42/catboost_oof_subject_preds.csv",
-        123: "results/baselines_s123/catboost_oof_subject_preds.csv",
-        456: "results/baselines_s456/catboost_oof_subject_preds.csv",
+    "BiCA-HS": {
+        42:  "results/bica_s42/bica_subject_val_predictions.csv",
+        123: "results/bica_s123/bica_subject_val_predictions.csv",
+        456: "results/bica_s456/bica_subject_val_predictions.csv",
+    },
+    "Tier5 (Ensemble+CEFAM)": {
+        42:  "results/tier5_cefam_s42/tier5_oof_subject_preds.csv",
+        123: "results/tier5_cefam_s123/tier5_oof_subject_preds.csv",
+        456: "results/tier5_cefam_s456/tier5_oof_subject_preds.csv",
+    },
+    "Tier5 (Ensemble+BiCA-HS)": {
+        42:  "results/tier5_bica_s42/tier5_oof_subject_preds.csv",
+        123: "results/tier5_bica_s123/tier5_oof_subject_preds.csv",
+        456: "results/tier5_bica_s456/tier5_oof_subject_preds.csv",
     },
 }
 

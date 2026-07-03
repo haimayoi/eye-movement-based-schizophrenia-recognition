@@ -1,5 +1,5 @@
 component,comparison,delta_auc,delta_acc,interpretation
-CEFAM Fusion + Handcrafted Stream,Full Hybrid vs GNN Only,0.009531249999999991,0.012499999999999956,Value of adding handcrafted features + bidirectional cross-attention
-GNN Stream (Graph Topology),Full Hybrid vs Tabular Only,0.0703125,0.06874999999999998,Value of graph-based representation over flat features
-Transformer Encoder (vs GAT),BiCA-HS vs GNN+CEFAM,0.011718750000000111,0.03125,Transformer sequence modeling vs graph topology modeling
-Full BiCA-HS vs GNN Standalone,BiCA-HS vs ST-GNN,0.021250000000000102,0.043749999999999956,Total gain from using Transformer+CrossAttn over GNN only
+CEFAM Fusion + Handcrafted Stream,Full Hybrid vs GNN Only,-0.025937500000000058,-0.025000000000000022,Fusion overhead: CEFAM cross-attention + handcrafted stream vs. pure GNN
+GNN Stream (Graph Topology),Full Hybrid vs Tabular Only,0.04171875000000003,0.043749999999999956,Value of graph-based representation over flat features
+Transformer Encoder (vs GAT),BiCA-HS vs GNN+CEFAM,0.046250000000000124,0.03749999999999998,Transformer sequence modeling vs graph topology modeling
+Full BiCA-HS vs GNN Standalone,BiCA-HS vs ST-GNN,0.020312500000000067,0.012499999999999956,Total gain from using Transformer+CrossAttn over GNN only

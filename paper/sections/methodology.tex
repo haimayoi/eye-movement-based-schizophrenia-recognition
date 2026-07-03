@@ -1,0 +1,67 @@
+\section{Methodology}
+\label{sec:methodology}
+
+Our proposed Hierarchical 5-Tier Framework maps raw eye-tracker data to diagnostic probabilities. The overall pipeline of our framework is visualized in Fig.~\ref{fig:pipeline_overview}. It spans from preprocessing (Tier 1) and feature engineering (Tier 2) to tabular baselines (Tier 3), parallel deep sequential models (Tier 4), and meta-learner ensembling (Tier 5). Fig.~\ref{fig:architecture} shows the detailed block diagrams of the two Tier~4 architectures.
+
+
+\subsection{Tier 3: Tabular Baselines (GBDT)}
+As strong baselines we train XGBoost \cite{chen2016xgboost}, LightGBM \cite{ke2017lightgbm}, and CatBoost \cite{prokhorenkova2018catboost} on the 135-dimensional Tier~2 feature vector. Trial-level predictions are aggregated to subject-level by averaging the four category-wise probability scores.
+
+\subsection{Tier 4A: GNN-CEFAM}
+
+\subsubsection{Graph Construction}
+For each trial we construct a spatiotemporal graph $G = (V, E)$ (represented in Fig.~\ref{fig:architecture}, left) to model scanpath topology.
+\begin{itemize}
+    \item \textbf{Nodes $V$:} Each node $v_i$ represents one fixation (padded to $N_\text{max}{=}24$ to handle varying sequence lengths). Its feature $h_i \in \mathbb{R}^{69}$ concatenates 5 low-level gaze features (normalized $X$, $Y$, duration, pupil diameter, and $\Delta$pupil between consecutive fixations) with a 64-dimensional visual feature. 
+    
+    \rev{For a fixation occurring at screen coordinate $(X_i, Y_i)$ on the $1024 \times 768$ stimulus image, we crop a square visual patch of size $224 \times 224$ pixels centered at $(X_i, Y_i)$. If the crop window overlaps the screen boundaries, the patch is zero-padded. This patch is normalized and passed through a pre-trained ResNet50 \cite{he2016deep} network to extract a 2048-dimensional visual embedding from the final average pooling layer, which is then projected to 64 dimensions using a learned linear layer.} 
+    
+    \rev{Concatenating the 5D gaze dynamics with the 64D visual features is non-redundant and essential: the 64D visual features capture \emph{spatial visual semantics} (e.g., whether the subject is looking at a face, text, or background), while the 5D gaze features capture \emph{temporal and physiological dynamics} (e.g., how long the eye dwelled, and pupil diameter reflecting cognitive load). This dual representation ensures that each node represents both what the subject is looking at and how they are looking at it.}
+    
+    \rev{The sequence length constraint $T = 24$ (where $T = N_\text{max}$) is a hardware-induced trade-off: since the raw 2048D ResNet features are loaded and projected on-GPU, using a larger $T$ (e.g., the actual maximum of 44 or a padded 200) causes GPU Out-of-Memory (OOM) errors during backpropagation of the projector's weights and triggers disk I/O bottlenecks. Since $75\%$ of trials in the EMS dataset contain $\le 20$ fixations (mean $16.81 \pm 7.73$), $T=24$ captures the vast majority of fixations without truncation. Trials with fewer than 24 fixations are padded with zero vectors, and a boolean mask is passed to ignore these padding nodes during Graph Attention Network (GAT) message passing.}
+    
+    \item \textbf{Edges $E$:} To capture spatial and temporal interactions, two types of edges are defined:
+        \begin{enumerate}
+            \item \textit{Temporal directed edges} ($v_i{\to}v_{i+1}$) link sequential fixations chronologically, carrying 2D saccade characteristics (amplitude, angle).
+            \item \textit{Spatial undirected edges} ($k$-NN, $k{=}3$) connect fixations that are spatially close in 2-D screen coordinates, allowing message passing across regions of interest that are visited at different times.
+        \end{enumerate}
+\end{itemize}
+ 
+\subsubsection{GNN Stream}
+The GNN stream processes the graph using exactly two GAT layers, each with 4 attention heads and batch normalization, yielding pre-pooling node representations $H_\text{nodes} \in \mathbb{R}^{N_\text{max} \times 256}$. A residual skip connection is applied. \rev{Two layers are chosen because a single layer only aggregates features from immediate 1-hop neighbors, whereas two layers enable 2-hop message propagation, allowing each fixation node to capture the context of its local scanpath neighborhood (e.g., transition loops and spatial gaze clusters). Using three or more layers is avoided to prevent the "over-smoothing" problem common in GNNs, where node representations become structurally indistinguishable.} Global Attention Pooling \cite{velickovic2018} compresses the node features into a graph representation vector $z_\text{graph} \in \mathbb{R}^{128}$.
+ 
+\subsubsection{Handcrafted Stream}
+The 135-dim expert vector $\mathbf{x}_\text{exp}$ is processed by a 2-layer MLP with batch normalization, GELU activation, and dropout to yield $z_\text{expert} \in \mathbb{R}^{128}$.
+ 
+\subsubsection{CEFAM}
+Prior cross-attention implementations unsqueeze both $z_\text{graph}$ and $z_\text{expert}$ to sequence length 1, making the softmax trivially equal to 1.0 and producing zero learning signal. CEFAM resolves this by performing genuine cross-attention against the pre-pooling node sequence:
+\begin{align}
+    z_{\text{fused},1} &= \text{MHA}(Q{=}z_\text{expert},\ K{=}H_\text{nodes},\ V{=}H_\text{nodes}) \label{eq:dir1}\\
+    z_{\text{fused},2} &= \text{MHA}(Q{=}z_\text{graph},\ K{=}z_\text{expert},\ V{=}z_\text{expert}) \label{eq:dir2}
+\end{align}
+Direction~1 (Eq.~\ref{eq:dir1}) produces a clinical saliency map $\text{attn}_1 \in \mathbb{R}^{B \times 1 \times N_\text{max}}$ over fixations; Direction~2 (Eq.~\ref{eq:dir2}) has $\text{seq\_len}{=}1$ and is therefore degenerate (attention ${\equiv}1.0$), acting as a learned linear projection. The two fused vectors are concatenated and classified: $z_\text{final} = \text{MLP}_\text{fusion}([z_{\text{fused},1} \| z_{\text{fused},2}]) \in \mathbb{R}^{256}$.
+ 
+\subsection{Tier 4B: BiCA-HS}
+The Bidirectional Cross-Attention Hybrid Stream models raw fixation trajectories directly without graph assumptions and without ResNet50 visual features, focusing purely on deep temporal dynamics.
+\begin{itemize}
+    \item \textbf{Learned Stream:} Up to 200 fixations, each a 5-dim vector ($X$, $Y$, timestamp, duration, pupil), are projected to 128 dimensions, injected with sinusoidal positional encodings, and processed by a 4-layer Transformer Encoder to produce $H_\text{seq} \in \mathbb{R}^{200 \times 128}$. 
+    
+    \rev{Here, the sequence length is configured as $T = 200$. Since the Learned Stream only processes 5-dimensional raw gaze vectors rather than heavy visual embeddings, the memory footprint of the sequence `[B, 200, 5]` is negligible. This allows us to set a large $T = 200$ to ensure zero information truncation (no fixations are lost, as the maximum fixation count in the dataset is 44). Trials shorter than 200 are padded with zeros, and an attention mask is applied to ensure that these padded positions are completely ignored by the self-attention and cross-attention mechanisms, preventing any negative impact on representation learning.}
+    
+    \item \textbf{Expert Stream:} The \textit{full} 135-dimensional feature vector $\mathbf{x}_\text{exp}$ (15 stimulus-level features $+$ 120 category-mean and delta features) is projected via an MLP to $z_\text{expert} \in \mathbb{R}^{128}$ at the trial-level (one vector per trial rather than per fixation).
+    \item \textbf{Bidirectional Cross-Attention:} Direction~1 uses $z_\text{expert}$ as query over $H_\text{seq}$ (expert-guided sequence attention); Direction~2 uses $H_\text{seq}$ tokens as queries over $z_\text{expert}$ (sequence-guided expert attention). Both directions produce meaningful attention because the sequence length is 200. Outputs are mean-pooled, concatenated, and classified.
+\end{itemize}
+
+\subsection{Tier 5: OOF Meta-Learner}
+We collect the out-of-fold (OOF) subject-level probability predictions of CatBoost ($P_\text{tab}$) and BiCA-HS ($P_\text{bica}$) across the 4-fold GroupKFold, and fit an $\ell_2$-regularized logistic regression meta-learner:
+\begin{equation}
+    P_\text{final} = \sigma\!\left(\beta_\text{tab}\,P_\text{tab} + \beta_\text{bica}\,P_\text{bica} + b\right)
+\end{equation}
+The coefficients $\beta_\text{tab}$ and $\beta_\text{bica}$ quantify the relative contribution of tabular clinical biomarkers versus deep temporal trajectories.
+
+\subsection{Training Details}
+Both Tier~4 models are trained with AdamW (lr\,=\,$5{\times}10^{-4}$, weight decay\,=\,$10^{-4}$), CosineAnnealingWarmRestarts scheduling, and early stopping on subject-level OOF AUC (patience\,=\,20 epochs, max\,=\,200). The joint loss is:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_\text{Focal}(\alpha{=}0.5,\,\gamma{=}2.0) + \lambda\,\mathcal{H}(\text{attn}),\quad \lambda{=}0.01
+\end{equation}
+where $\mathcal{L}_\text{Focal}$ \cite{lin2017focal} down-weights easy examples and $\mathcal{H}(\text{attn})$ is a sparsity entropy penalty on attention weights, encouraging interpretable sparse fixation saliency maps. The cross-validation protocol uses a subject-level GroupKFold with 4 predefined folds from \texttt{Train\_Valid.xlsx}, guaranteeing no subject appears in both training and validation splits.

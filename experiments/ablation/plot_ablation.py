@@ -38,6 +38,7 @@ COLORS = {
     'GNN+CEFAM (Full Hybrid)': '#4CAF50',
     'ST-GNN (GNN Only)': '#FF9800',
     'XGBoost (Tabular Only)': '#9C27B0',
+    'CatBoost (Tabular Only)': '#795548',
     'MSNet (SOTA)': '#F44336',
 }
 

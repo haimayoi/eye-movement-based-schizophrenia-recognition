@@ -4,7 +4,8 @@
         "GNN+CEFAM (Full Hybrid)",
         "ST-GNN (GNN Only)",
         "BiCA-HS (Transformer)",
-        "XGBoost (Tabular Only)"
+        "XGBoost (Tabular Only)",
+        "CatBoost (Tabular Only)"
     ],
     "sota_reference": {
         "model": "MSNet (Song et al., IEEE TNNLS 2025)",
@@ -12,12 +13,12 @@
         "auc": 0.8854
     },
     "key_findings": [
-        "Best model: BiCA-HS (Transformer) with AUC=0.9522, ACC=0.9062",
-        "CEFAM Fusion + Handcrafted Stream: dAUC=+0.0095, dACC=+0.0125",
-        "GNN Stream (Graph Topology): dAUC=+0.0703, dACC=+0.0687",
-        "Transformer Encoder (vs GAT): dAUC=+0.0117, dACC=+0.0312",
-        "Full BiCA-HS vs GNN Standalone: dAUC=+0.0213, dACC=+0.0437",
-        "Most stable model: GNN+CEFAM (Full Hybrid) (CV_AUC=0.0321)"
+        "Best model: BiCA-HS (Transformer) with AUC=0.9581, ACC=0.8875",
+        "CEFAM Fusion + Handcrafted Stream: dAUC=-0.0259, dACC=-0.0250",
+        "GNN Stream (Graph Topology): dAUC=+0.0417, dACC=+0.0437",
+        "Transformer Encoder (vs GAT): dAUC=+0.0463, dACC=+0.0375",
+        "Full BiCA-HS vs GNN Standalone: dAUC=+0.0203, dACC=+0.0125",
+        "Most stable model: BiCA-HS (Transformer) (CV_AUC=0.0241)"
     ],
     "files_generated": [
         "F1_model_comparison.csv",

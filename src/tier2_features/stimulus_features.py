@@ -90,21 +90,21 @@ def extract_trial_features(df_trial, screen_w=1024, screen_h=768):
     dy = np.diff(y)
     amplitudes = np.sqrt(dx**2 + dy**2)
     
-    # Saccade velocities (amplitude / duration of target fixation)
+    # SA-FDR (Saccade Amplitude to Post-Saccadic Fixation Duration Ratio)
     # The first fixation dur corresponds to i=0, so the target fixation for first saccade is at i=1
     sacc_durations = dur[1:]
-    velocities = []
+    sa_fdr_values = []
     for amp, s_dur in zip(amplitudes, sacc_durations):
         if s_dur > 0:
-            velocities.append(amp / s_dur)
+            sa_fdr_values.append(amp / s_dur)
         else:
-            velocities.append(0.0)
+            sa_fdr_values.append(0.0)
             
     turning_angles = compute_turning_angles(dx, dy)
     
     features['sacc_amp_mean'] = np.mean(amplitudes) if len(amplitudes) > 0 else 0.0
     features['sacc_amp_std'] = np.std(amplitudes) if len(amplitudes) > 1 else 0.0
-    features['sacc_vel_mean'] = np.mean(velocities) if len(velocities) > 0 else 0.0
+    features['sa_fdr_mean'] = np.mean(sa_fdr_values) if len(sa_fdr_values) > 0 else 0.0
     features['sacc_angle_mean'] = np.mean(turning_angles) if len(turning_angles) > 0 else 0.0
     
     # Scanpath geometry

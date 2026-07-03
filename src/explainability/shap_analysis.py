@@ -64,6 +64,7 @@ def explain_xgboost(
 
 def explain_handcrafted_stream(
     handcrafted_stream: nn.Module,
+    classification_head: nn.Module,
     X_background: np.ndarray,       # background samples for KernelExplainer
     X_explain: np.ndarray,          # samples to explain
     feature_names: list[str],
@@ -71,10 +72,9 @@ def explain_handcrafted_stream(
     device: str = "cpu",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Computes SHAP values for the HandcraftedStream MLP using KernelExplainer
-    (model-agnostic, works for any torch.nn.Module).
-
-    Note: Use a subsample for speed (KernelExplainer is O(n²) in features).
+    Computes SHAP values for the HandcraftedStream MLP using KernelExplainer.
+    We pass the handcrafted_stream embedding output through the classification_head
+    to correctly yield 2-class probabilities.
 
     Returns:
         shap_values : [N, n_features]
@@ -83,12 +83,14 @@ def explain_handcrafted_stream(
     assert _HAS_SHAP, "Install shap: pip install shap"
 
     handcrafted_stream = handcrafted_stream.eval().to(device)
+    classification_head = classification_head.eval().to(device)
 
     def model_fn(x: np.ndarray) -> np.ndarray:
         """Wrapper: numpy → torch → numpy (positive class proba)."""
         with torch.no_grad():
             t = torch.tensor(x, dtype=torch.float32, device=device)
-            logits = handcrafted_stream(t)
+            embedding = handcrafted_stream(t)
+            logits = classification_head(embedding)
             probs = torch.softmax(logits, dim=-1)[:, 1]
         return probs.cpu().numpy()
 

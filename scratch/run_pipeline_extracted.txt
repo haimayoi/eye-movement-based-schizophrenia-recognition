@@ -1,0 +1,1837 @@
+
+========================================
+CELL 0 (markdown)
+========================================
+# Seed 42
+
+========================================
+CELL 1 (markdown)
+========================================
+# Eye Movement-Based Schizophrenia Recognition — Full Pipeline
+
+| Cell | Mục đích |
+|---|---|
+| 1 | Mount Drive + cd vào project |
+| 2 | 🔴 XÓA kết quả cũ (bỏ comment khi cần reset) |
+| 3 | Install thư viện còn thiếu |
+| 4 | Tier 1 — Preprocessing |
+| 5 | Tier 2 — Feature Engineering |
+| 6 | Tier 3 — Tabular (XGBoost) |
+| 7 | Tier 4A — ResNet50 extraction |
+| 8 | Tier 4B — Build graphs |
+| 9 | Tier 4C — GNN-CEFAM training |
+| 10 | Tier 4D — BiCA-HS training |
+| 11 | Tier 5 — Meta-Learner |
+| 12 | Tổng hợp kết quả |
+
+========================================
+CELL 2 (markdown)
+========================================
+# Drive + lib
+
+========================================
+CELL 3 (code)
+========================================
+from google.colab import drive
+drive.mount('/content/drive')
+
+%cd "/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition"
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Drive already mounted at /content/drive; to attempt to forcibly remount, call drive.mount("/content/drive", force_remount=True).
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition
+------------------------------
+
+========================================
+CELL 4 (code)
+========================================
+# 🔴 XÓA KẾT QUẢ CŨ — bỏ comment từng dòng tùy mức độ reset
+
+# Xóa checkpoint + OOF Tier 4 (BẮT BUỘC sau khi fix C-1, C-2, C-3)
+# !rm -rf results/bica/ results/cefam/ results/stgnn/ results/tier5/
+# !rm -rf "Bidirectional Cross-Attention Hybrid Stream/results/checkpoints/"
+
+# Xóa Tier 3
+# !rm -rf results/baselines/
+
+# Xóa graphs (rebuild từ đầu)
+# !rm -rf data/processed/graphs/
+
+# Xóa toàn bộ (chạy lại từ raw data)
+# !rm -rf results/ data/processed/ data/external/
+
+========================================
+CELL 5 (code)
+========================================
+# Colab đã có sẵn torch/sklearn/pandas — chỉ install thêm cái còn thiếu
+!pip install torch-geometric
+!pip install pyyaml omegaconf optuna catboost pyarrow openpyxl xgboost lightgbm shap
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Requirement already satisfied: torch-geometric in /usr/local/lib/python3.12/dist-packages (2.8.0)
+Requirement already satisfied: aiohttp in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (3.14.1)
+Requirement already satisfied: fsspec in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (2025.3.0)
+Requirement already satisfied: jinja2 in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (3.1.6)
+Requirement already satisfied: numpy in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (2.0.2)
+Requirement already satisfied: psutil>=5.8.0 in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (5.9.5)
+Requirement already satisfied: pyparsing in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (3.3.2)
+Requirement already satisfied: requests in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (2.32.4)
+Requirement already satisfied: tqdm in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (4.67.3)
+Requirement already satisfied: xxhash in /usr/local/lib/python3.12/dist-packages (from torch-geometric) (3.7.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /usr/local/lib/python3.12/dist-packages (from aiohttp->torch-geometric) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /usr/local/lib/python3.12/dist-packages (from aiohttp->torch-geometric) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /usr/local/lib/python3.12/dist-packages (from aiohttp->torch-
+... [TRUNCATED] ...
+fied: tzdata>=2022.7 in /usr/local/lib/python3.12/dist-packages (from pandas<4.0,>=0.24->catboost) (2026.2)
+Requirement already satisfied: greenlet>=1 in /usr/local/lib/python3.12/dist-packages (from sqlalchemy>=1.4.2->optuna) (3.5.1)
+Requirement already satisfied: contourpy>=1.0.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (1.3.3)
+Requirement already satisfied: cycler>=0.10 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (0.12.1)
+Requirement already satisfied: fonttools>=4.22.0 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (4.63.0)
+Requirement already satisfied: kiwisolver>=1.3.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (1.5.0)
+Requirement already satisfied: pillow>=8 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (11.3.0)
+Requirement already satisfied: pyparsing>=2.3.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->catboost) (3.3.2)
+Requirement already satisfied: tenacity>=6.2.0 in /usr/local/lib/python3.12/dist-packages (from plotly->catboost) (9.1.4)
+Requirement already satisfied: joblib>=1.2.0 in /usr/local/lib/python3.12/dist-packages (from scikit-learn->shap) (1.5.3)
+Requirement already satisfied: threadpoolctl>=3.1.0 in /usr/local/lib/python3.12/dist-packages (from scikit-learn->shap) (3.6.0)
+Requirement already satisfied: MarkupSafe>=0.9.2 in /usr/local/lib/python3.12/dist-packages (from Mako->alembic>=1.5.0->optuna) (3.0.3)
+------------------------------
+
+========================================
+CELL 6 (markdown)
+========================================
+# Tier 1: Once for all seed
+
+========================================
+CELL 7 (code)
+========================================
+# Tier 1: Tạo category map + tiền xử lý dữ liệu thô
+!python -m src.utils.generate_category_map
+!python -m src.tier1_preprocessing.preprocess
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Successfully generated category mapping for 100 images at data/metadata/stimulus_categories.csv
+--- Tier 1: Loading raw data ---
+Loading Fixations: 100% 160/160 [00:18<00:00,  8.66it/s]
+Loading Fixations: 100% 48/48 [00:36<00:00,  1.31it/s]
+Total raw fixations loaded: 293740
+Spatial boundary filter: removed 5037 out of 293740 fixations (1.71%)
+Temporal duration filter: removed 7666 out of 288703 fixations (2.66%)
+Successfully saved 281037 fixations to data/processed/clean_fixations.parquet
+--- Tier 1 Preprocessing Completed Successfully ---
+------------------------------
+
+========================================
+CELL 8 (markdown)
+========================================
+# Tier 2: Once for all seed
+
+========================================
+CELL 9 (code)
+========================================
+# Tier 2: Trích xuất đặc trưng stimulus-level + subject-level delta
+!python -m src.tier2_features.stimulus_features
+!python -m src.tier2_features.subject_aggregator
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Extracting features per trial...
+100% 20695/20695 [00:23<00:00, 871.68it/s]
+Extracted features for 20695 trials. Saved to data/processed/features_stimulus_level.csv
+Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+Loading category mapping from data/metadata/stimulus_categories.csv...
+Computing mean feature values per subject, per category...
+Computing contextual delta features...
+Aggregated subject-level features for 208 subjects. Saved to data/processed/features_subject_level.csv
+------------------------------
+
+========================================
+CELL 10 (markdown)
+========================================
+# Seed 42
+
+========================================
+CELL 11 (markdown)
+========================================
+# Tier 3 - Seed 42: XGBoost, LightGBM, CatBoost
+
+========================================
+CELL 12 (code)
+========================================
+# Tier 3: Tabular baseline (XGBoost)
+!python -m src.tier3_tabular.tabular_models --model xgboost
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [06:06:52] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 1 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [06:06:53] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 2 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [06:06:54] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 3 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [06:06:55] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.7802
+  Stimulus-Level Auc: 0.8698
+  Stimulus-Level F1: 0.7834
+  Stimulus-Level Precision: 0.7693
+  Stimulus-Level Recall: 0.7980
+  Stimulus-Level Specificity: 0.7626
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.7812
+  Subject-Level Auc: 0.8702
+  Subject-Level F1: 0.7853
+  Subject-Level Precision: 0.7711
+  Subject-Level Recall: 0.8000
+  Subject-Level Specificity: 0.7625
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines/xgboost_oof_subject_preds.csv
+Saved results summary to results/baselines/xgboost_results_summary.json
+Saved test predictions to results/baselines/xgboost_test_predictions.csv
+------------------------------
+
+========================================
+CELL 13 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model lightgbm
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.7615
+  Stimulus-Level Auc: 0.8385
+  Stimulus-Level F1: 0.7692
+  Stimulus-Level Precision: 0.7423
+  Stimulus-Level Recall: 0.7980
+  Stimulus-Level Specificity: 0.7253
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.7625
+  Subject-Level Auc: 0.8395
+  Subject-Level F1: 0.7711
+  Subject-Level Precision: 0.7442
+  Subject-Level Recall: 0.8000
+  Subject-Level Specificity: 0.7250
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines/lightgbm_oof_subject_preds.csv
+Saved results summary to results/baselines/lightgbm_results_summary.json
+Saved test predictions to results/baselines/lightgbm_test_predictions.csv
+------------------------------
+
+========================================
+CELL 14 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model catboost
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.8114
+  Stimulus-Level Auc: 0.8971
+  Stimulus-Level F1: 0.8057
+  Stimulus-Level Precision: 0.8272
+  Stimulus-Level Recall: 0.7854
+  Stimulus-Level Specificity: 0.8372
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.8125
+  Subject-Level Auc: 0.8981
+  Subject-Level F1: 0.8077
+  Subject-Level Precision: 0.8289
+  Subject-Level Recall: 0.7875
+  Subject-Level Specificity: 0.8375
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines/catboost_oof_subject_preds.csv
+Saved results summary to results/baselines/catboost_results_summary.json
+Saved test predictions to results/baselines/catboost_test_predictions.csv
+------------------------------
+
+========================================
+CELL 15 (markdown)
+========================================
+# Tier 4A: Extract ResNet feature, once for all seed
+
+========================================
+CELL 16 (code)
+========================================
+# Tier 4A: Trích xuất ResNet50 visual features (2048-dim)
+# Output: data/external/feature_dict_ResNet50.npy
+!python -m src.utils.extract_resnet_features
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:======================================================================
+ VISUAL FEATURE EXTRACTION (ResNet50 Baseline)
+======================================================================
+Found 100 stimulus images in EMS/Images.
+Loading pre-trained ResNet50 on device: cuda...
+Downloading: "https://download.pytorch.org/models/resnet50-0676ba61.pth" to /root/.cache/torch/hub/checkpoints/resnet50-0676ba61.pth
+100% 97.8M/97.8M [00:00<00:00, 242MB/s]
+Extracting feature maps for all stimulus images...
+Extracting image features: 100% 100/100 [01:12<00:00,  1.38it/s]
+Mapping visual features to subject fixations...
+Mapping to trials: 100% 16716/16716 [00:56<00:00, 295.45it/s]
+
+Successfully extracted ResNet50 features. Saved to data/external/feature_dict_ResNet50.npy
+Total trials mapped: 16716
+Feature vector dimension: 2048
+======================================================================
+------------------------------
+
+========================================
+CELL 17 (markdown)
+========================================
+# Tier 4B: Build graph, once for all seed
+
+========================================
+CELL 18 (code)
+========================================
+# Tier 4B: Xây dựng đồ thị PyG từ fixation data + ResNet50 features
+# Output: data/processed/graphs/graphs.pt
+!python -m src.tier4_advanced.graph_builder
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Global pupil stats (minor leakage — see NOTE above): Mean=1218.29, Std=614.17
+Loading ResNet50 features from data/external/feature_dict_ResNet50.npy...
+Detected visual feature dimension from dataset: 2048
+Building spatiotemporal graphs...
+100% 16716/16716 [00:37<00:00, 448.59it/s]
+Successfully constructed and saved 16716 graphs at data/processed/graphs/graphs.pt
+------------------------------
+
+========================================
+CELL 19 (markdown)
+========================================
+# All tier 4 - Seed 42
+
+========================================
+CELL 20 (code)
+========================================
+# Tier 4C: Huấn luyện GNN-CEFAM (4-fold GroupKFold)
+# Output: results/cefam/cefam_oof_subject_preds.csv
+!python scripts/train_tier4.py --seed 42 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Loaded 120 delta features from data/processed/features_subject_level.csv
+Handcrafted feature dimension: 135 (15 stimulus + 120 delta)
+Total train/valid graphs: 15598
+Total test graphs: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train graphs: 11686, Val graphs: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Found existing checkpoint at results/cefam/checkpoints/cefam_fold_0_best.pt. Evaluating...
+Loaded checkpoint — Val Subject AUC: 0.9621
+
+==================== Training Fold 1 ====================
+Fold 1 training pupil stats: Mean=1256.3683, Std=633.2075
+Train graphs: 11708, Val graphs: 3890
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Found existing checkpoint at results/cefam/checkpoints/cefam_fold_1_best.pt. Evaluating...
+Loaded checkpoint — Val Subject AUC: 0.9479
+
+==================== Training Fold 2 ====================
+Fold 2 training pupil stats: Mean=1235.0488, Std=619.8227
+Train graphs: 11711, Val graphs: 3887
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0582 TrAUC=0.9149 | VaLoss=0.0484 VaTrialAUC=0.9543 VaSubjAUC=0.9700
+object address  : 0x784ce43bf280
+object refcount : 3
+object type     : 0xa284e0
+object type name: KeyboardInterrupt
+object repr     : KeyboardInterrupt()
+lost sys.stderr
+------------------------------
+
+========================================
+CELL 21 (code)
+========================================
+!python scripts/train_tier4.py --config configs/stgnn_config.yaml --seed 42 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Total train/valid graphs: 15598
+Total test graphs: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train graphs: 11686, Val graphs: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0751 TrAUC=0.7604 | VaLoss=0.0716 VaTrialAUC=0.7916 VaSubjAUC=0.8485
+Ep 005/200 | TrLoss=0.0431 TrAUC=0.9043 | VaLoss=0.0599 VaTrialAUC=0.8171 VaSubjAUC=0.8712
+Ep 010/200 | TrLoss=0.0392 TrAUC=0.9207 | VaLoss=0.0714 VaTrialAUC=0.8290 VaSubjAUC=0.8864
+Ep 015/200 | TrLoss=0.0338 TrAUC=0.9407 | VaLoss=0.0839 VaTrialAUC=0.8366 VaSubjAUC=0.8939
+Ep 020/200 | TrLoss=0.0320 TrAUC=0.9482 | VaLoss=0.0972 VaTrialAUC=0.8306 VaSubjAUC=0.8914
+Ep 025/200 | TrLoss=0.0367 TrAUC=0.9314 | VaLoss=0.0659 VaTrialAUC=0.8336 VaSubjAUC=0.8864
+Early stopping at epoch 28 (Best Val Subject AUC: 0.9015)
+Fold 0 complete. Best Val Subject AUC: 0.9015
+
+==================== Training Fold 1 ====================
+Fold 1 training pupil stats: Mean=1256.3683, Std=633.2075
+Train graphs: 11708, Val graphs: 3890
+/content/drive/.shortcut-targets-b
+... [TRUNCATED] ...
+ry to results/stgnn/stgnn_results_summary.json
+
+--- Running Test Set Inference on 1118 graphs ---
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/stgnn/stgnn_test_predictions.csv
+------------------------------
+
+========================================
+CELL 22 (code)
+========================================
+# Old version wrong 15 feature, ran new version with 135 feature below
+# Tier 4D: Huấn luyện BiCA-HS (4-fold GroupKFold)
+# PYTHONPATH=. bắt buộc để import src.*
+# Output: results/bica/bica_subject_val_predictions.csv
+# !PYTHONPATH=. python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" --config configs/bica_config.yaml
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Train trials: 11686, Val trials: 3912
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Found existing checkpoint at results/bica/checkpoints/bica_fold_0_best.pt. Resuming and evaluating...
+Loaded checkpoint - Val Loss: 0.0595 | Val Trial AUC: 0.8669 | Val Subject AUC: 0.9141
+
+==================== Training Fold 1 ====================
+Train trials: 11708, Val trials: 3890
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Found existing checkpoint at results/bica/checkpoints/bica_fold_1_best.pt. Resuming and evaluating...
+Loaded checkpoint - Val Loss: 0.0479 | Val Trial AUC: 0.9188 | Val Subject AUC: 0.9583
+
+==================== Training Fold 2 ====================
+Train trials: 
+... [TRUNCATED] ...
+nning Test Set Inference on 1118 trials ---
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/bica/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 23 (code)
+========================================
+!python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" \
+    --seed 42 \
+    --batch-size 128 \
+    --output_dir results/bica_135feat_s42
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Loaded 120 delta features from data/processed/features_subject_level.csv
+Handcrafted feature dimension: 135 (15 stimulus + 120 delta)
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train trials: 11686, Val trials: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Epoch 001/150 | Train Loss: 0.0433 | Train AUC: 0.9569 | Val Loss: 0.0963 | Val Trial AUC: 0.8360 | Val Subject AUC: 0.8535
+Epoch 005/150 | Train Loss: 0.0102 | Train AUC: 0.9964 | Val Loss: 0.1198 | Val Trial AUC: 0.8965 | Val Subject AUC: 0.9091
+Epoch 010/150 | Train Loss: 0.0105 | Train AUC: 0.9961 | Val Loss: 0.0775 | Val Trial AUC: 0.9218 | Val Subject AUC: 0.9369
+Epoch 015/150 | Train Loss: 0.0066 | Train AUC: 0.9982 | Val Loss: 0.0873 | Val Trial AUC: 0.9543 | Val Subject AUC: 0.9596
+Epoch 020/150 | Train Loss: 0.0058 | Train AUC: 0.9987 | Val Loss: 0.0959 | Val Trial AUC: 0.9373 | Val Sub
+... [TRUNCATED] ...
+ested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/bica_135feat_s42/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 24 (markdown)
+========================================
+# All tier 5 - seed 42
+
+========================================
+CELL 25 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s42/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s42/xgboost_test_predictions.csv \
+    --tier4-oof results/cefam_s42/cefam_oof_subject_preds.csv \
+    --tier4-test results/cefam_s42/cefam_test_predictions.csv \
+    --output-dir results/tier5_cefam_s42/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:47:56.469714: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:47:56.535125: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.001, 0.996]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8702  ACC: 0.7812  Brier: 0.1779  BSS: 0.2886  ECE: 0.1710
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9119  ACC: 0.8313  Brier: 0.1207  BSS: 0.5171  ECE: 0.0537
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.2442  w_bica=0.7558  OOF AUC=0.9295
+[LogisticReg] CV AUC: 0.9169 ± 0.0165
+[LogisticReg] Coefficients: β_tab=1.8312  β_bica=3.1699  bias=-2.4281
+
+[Tier5] Selected: Weighted Average (AUC 0.9295 > L
+... [TRUNCATED] ...
+5 Metrics ---
+  Auc            : 0.9295
+  Accuracy       : 0.8688
+  F1             : 0.8645
+  Precision      : 0.8933
+  Recall         : 0.8375
+  Specificity    : 0.9000
+  Brier_score    : 0.1072
+  Brier_skill_score: 0.5711
+  Ece            : 0.0799
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=0.9126  NLL=0.3514
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9295
+  Accuracy       : 0.8688
+  F1             : 0.8645
+  Precision      : 0.8933
+  Recall         : 0.8375
+  Specificity    : 0.9000
+  Brier_score    : 0.1063
+  Brier_skill_score: 0.5749
+  Ece            : 0.0529
+
+[Tier5] Saved ROC comparison to results/tier5_cefam_s42/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_cefam_s42/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_cefam_s42/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_cefam_s42/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_cefam_s42/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_cefam_s42/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8702
+ Tier 4  AUC: 0.9119
+ Tier 5  AUC: 0.9295  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_cefam_s42/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 26 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s42/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s42/xgboost_test_predictions.csv \
+    --tier4-oof results/bica_s42/bica_subject_val_predictions.csv \
+    --tier4-test results/bica_s42/bica_test_predictions.csv \
+    --output-dir results/tier5_bica_s42/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:48:33.285058: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:48:33.355596: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.001, 0.999]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8702  ACC: 0.7812  Brier: 0.1779  BSS: 0.2886  ECE: 0.1710
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9581  ACC: 0.8750  Brier: 0.0880  BSS: 0.6479  ECE: 0.0643
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.0733  w_bica=0.9267  OOF AUC=0.9600
+[LogisticReg] CV AUC: 0.9550 ± 0.0176
+[LogisticReg] Coefficients: β_tab=1.5812  β_bica=3.6181  bias=-2.6397
+
+[Tier5] Selected: Weighted Average (AUC 0.9600 > L
+... [TRUNCATED] ...
+d Tier 5 Metrics ---
+  Auc            : 0.9600
+  Accuracy       : 0.8812
+  F1             : 0.8820
+  Precision      : 0.8765
+  Recall         : 0.8875
+  Specificity    : 0.8750
+  Brier_score    : 0.0846
+  Brier_skill_score: 0.6616
+  Ece            : 0.0502
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=0.9372  NLL=0.2666
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9600
+  Accuracy       : 0.8812
+  F1             : 0.8820
+  Precision      : 0.8765
+  Recall         : 0.8875
+  Specificity    : 0.8750
+  Brier_score    : 0.0851
+  Brier_skill_score: 0.6598
+  Ece            : 0.0553
+
+[Tier5] Saved ROC comparison to results/tier5_bica_s42/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_bica_s42/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_bica_s42/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_bica_s42/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_bica_s42/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_bica_s42/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8702
+ Tier 4  AUC: 0.9581
+ Tier 5  AUC: 0.9600  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_bica_s42/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 27 (markdown)
+========================================
+# Seed 123
+
+========================================
+CELL 28 (markdown)
+========================================
+# Tier 3 - Seed 123: XGBoost, LightGBM, CatBoost
+
+========================================
+CELL 29 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model xgboost --seed 123
+!python -m src.tier3_tabular.tabular_models --model catboost --seed 123
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:00:44] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 1 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:00:44] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 2 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:00:45] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label
+... [TRUNCATED] ...
+ry-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.8178
+  Stimulus-Level Auc: 0.8996
+  Stimulus-Level F1: 0.8111
+  Stimulus-Level Precision: 0.8383
+  Stimulus-Level Recall: 0.7856
+  Stimulus-Level Specificity: 0.8497
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.8187
+  Subject-Level Auc: 0.9006
+  Subject-Level F1: 0.8129
+  Subject-Level Precision: 0.8400
+  Subject-Level Recall: 0.7875
+  Subject-Level Specificity: 0.8500
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines_s123/catboost_oof_subject_preds.csv
+Saved results summary to results/baselines_s123/catboost_results_summary.json
+Saved test predictions to results/baselines_s123/catboost_test_predictions.csv
+------------------------------
+
+========================================
+CELL 30 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model lightgbm --seed 123
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.7866
+  Stimulus-Level Auc: 0.8430
+  Stimulus-Level F1: 0.7935
+  Stimulus-Level Precision: 0.7658
+  Stimulus-Level Recall: 0.8233
+  Stimulus-Level Specificity: 0.7503
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.7875
+  Subject-Level Auc: 0.8436
+  Subject-Level F1: 0.7952
+  Subject-Level Precision: 0.7674
+  Subject-Level Recall: 0.8250
+  Subject-Level Specificity: 0.7500
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines_s123/lightgbm_oof_subject_preds.csv
+Saved results summary to results/baselines_s123/lightgbm_results_summary.json
+Saved test predictions to results/baselines_s123/lightgbm_test_predictions.csv
+------------------------------
+
+========================================
+CELL 31 (markdown)
+========================================
+# All tier 4 - seed 123
+
+========================================
+CELL 32 (code)
+========================================
+!python scripts/train_tier4.py --seed 123 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Loaded 120 delta features from data/processed/features_subject_level.csv
+Handcrafted feature dimension: 135 (15 stimulus + 120 delta)
+Total train/valid graphs: 15598
+Total test graphs: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train graphs: 11686, Val graphs: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0537 TrAUC=0.9359 | VaLoss=0.0853 VaTrialAUC=0.8608 VaSubjAUC=0.8763
+Ep 005/200 | TrLoss=0.0064 TrAUC=0.9988 | VaLoss=0.1347 VaTrialAUC=0.8771 VaSubjAUC=0.9091
+Ep 010/200 | TrLoss=0.0023 TrAUC=0.9998 | VaLoss=0.1778 VaTrialAUC=0.8890 VaSubjAUC=0.9015
+Ep 015/200 | TrLoss=0.0011 TrAUC=1.0000 | VaLoss=0.1900 VaTrialAUC=0.8901 VaSubjAUC=0.9091
+Ep 020/200 | TrLoss=0.0009 TrAUC=1.0000 | VaLoss=0.2082 VaTrialAUC=0.8995 VaSubjAUC=0.9167
+Ep 025/200 | TrLoss=0.0021 TrAUC=0.9999 | VaLoss=0.1397 VaTrialAUC=0.9038 VaSubjAUC=0.9192
+Ep 030/200 | TrLoss=0.0020 TrAUC=0.9998 | VaLoss=0.1707 VaTri
+... [TRUNCATED] ...
+AUC=0.9192
+Ep 060/200 | TrLoss=0.0002 TrAUC=1.0000 | VaLoss=0.1513 VaTrialAUC=0.9233 VaSubjAUC=0.9318
+Early stopping at epoch 62 (Best Val Subject AUC: 0.9470)
+Fold 0 complete. Best Val Subject AUC: 0.9470
+
+==================== Training Fold 1 ====================
+Fold 1 training pupil stats: Mean=1256.3683, Std=633.2075
+Train graphs: 11708, Val graphs: 3890
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0545 TrAUC=0.9206 | VaLoss=0.0827 VaTrialAUC=0.8772 VaSubjAUC=0.8932
+Ep 005/200 | TrLoss=0.0064 TrAUC=0.9989 | VaLoss=0.1292 VaTrialAUC=0.9033 VaSubjAUC=0.9062
+Ep 010/200 | TrLoss=0.0019 TrAUC=0.9999 | VaLoss=0.1776 VaTrialAUC=0.8899 VaSubjAUC=0.8932
+Ep 015/200 | TrLoss=0.0011 TrAUC=1.0000 | VaLoss=0.1666 VaTrialAUC=0.9033 VaSubjAUC=0.9115
+Ep 020/200 | TrLoss=0.0008 TrAUC=1.0000 | VaLoss=0.1767 VaTrialAUC=0.9032 VaSubjAUC=0.9141
+Early stopping at epoch 24 (Best Val Subject AUC: 0.9375)
+Fold 1 complete. Best Val Subject AUC: 0.9375
+
+==================== Training Fold 2 ====================
+Fold 2 training pupil stats: Mean=1235.0488, Std=619.8227
+object address  : 0x79afea7a7880
+object refcount : 3
+object type     : 0xa284e0
+object type name: KeyboardInterrupt
+object repr     : KeyboardInterrupt()
+lost sys.stderr
+------------------------------
+
+========================================
+CELL 33 (code)
+========================================
+!python scripts/train_tier4.py --config configs/stgnn_config.yaml --seed 123 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Total train/valid graphs: 15598
+Total test graphs: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train graphs: 11686, Val graphs: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0760 TrAUC=0.7676 | VaLoss=0.0767 VaTrialAUC=0.7602 VaSubjAUC=0.8030
+Ep 005/200 | TrLoss=0.0448 TrAUC=0.8974 | VaLoss=0.0704 VaTrialAUC=0.8037 VaSubjAUC=0.8409
+Ep 010/200 | TrLoss=0.0402 TrAUC=0.9157 | VaLoss=0.0641 VaTrialAUC=0.8084 VaSubjAUC=0.8535
+Ep 015/200 | TrLoss=0.0378 TrAUC=0.9265 | VaLoss=0.0728 VaTrialAUC=0.8290 VaSubjAUC=0.8763
+Ep 020/200 | TrLoss=0.0359 TrAUC=0.9340 | VaLoss=0.0811 VaTrialAUC=0.8299 VaSubjAUC=0.8813
+Ep 025/200 | TrLoss=0.0403 TrAUC=0.9155 | VaLoss=0.0707 VaTrialAUC=0.8203 VaSubjAUC=0.8763
+Ep 030/200 | TrLoss=0.0369 TrAUC=0.9290 | VaLoss=0.0857 VaTrialAUC=0.8297 VaSubjAUC=0.8813
+Ep 035/200 | TrLoss=0.0367 TrAUC=0.9294 | VaLoss=0.0722 VaTrialAUC=0.8258 VaSubjAUC=0.8763
+Ep 040/200 | TrLoss=0.0338 TrAUC=0.9388 | VaLoss=0.0691 VaTrialAUC=0.8280 VaSubjAUC=0.8864
+Ep 045/200 | TrLoss=
+... [TRUNCATED] ...
+lts/stgnn_s123/stgnn_results_summary.json
+
+--- Running Test Set Inference on 1118 graphs ---
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/stgnn_s123/stgnn_test_predictions.csv
+------------------------------
+
+========================================
+CELL 34 (code)
+========================================
+# Old with 15 feature, new version with 135 feature ran below
+#!PYTHONPATH=. python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" \
+#    --config configs/bica_config.yaml --seed 123
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Train trials: 11686, Val trials: 3912
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Epoch 001/150 | Train Loss: 0.0624 | Train AUC: 0.8908 | Val Loss: 0.0922 | Val Trial AUC: 0.7297 | Val Subject AUC: 0.7374
+Epoch 005/150 | Train Loss: 0.0436 | Train AUC: 0.9268 | Val Loss: 0.0677 | Val Trial AUC: 0.8406 | Val Subject AUC: 0.8864
+Epoch 010/150 | Train Loss: 0.0423 | Train AUC: 0.9315 | Val Loss: 0.0872 | Val Trial AUC: 0.8223 | Val Subject AUC: 0.8535
+Epoch 015/150 | Train Loss: 0.0401 | Train AUC: 0.9374 | Val Loss: 0.0730 | Val Trial AUC: 0.8557 | Val Subject AUC: 0.8990
+Early stopping at epoch 19 (Best Val Subject AUC: 0.9091)
+Fold 0 complete. Best Validation Subject AUC: 0.9091
+
+==================== Training Fold 1 ====================
+Train trials: 11708, Val trials: 3890
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.us
+... [TRUNCATED] ...
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to Bidirectional Cross-Attention Hybrid Stream/results_s123/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 35 (code)
+========================================
+!python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" --seed 123 --output_dir results/bica_135feat_s123
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Loaded 120 delta features from data/processed/features_subject_level.csv
+Handcrafted feature dimension: 135 (15 stimulus + 120 delta)
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train trials: 11686, Val trials: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Epoch 001/150 | Train Loss: 0.0424 | Train AUC: 0.9535 | Val Loss: 0.0489 | Val Trial AUC: 0.9165 | Val Subject AUC: 0.9318
+Epoch 005/150 | Train Loss: 0.0115 | Train AUC: 0.9956 | Val Loss: 0.0617 | Val Trial AUC: 0.9212 | Val Subject AUC: 0.9343
+Epoch 010/150 | Train Loss: 0.0084 | Train AUC: 0.9975 | Val Loss: 0.0904 | Val Trial AUC: 0.9312 | Val Subject AUC: 0.9394
+Epoch 015/150 | Train Loss: 0.0086 | Train AUC: 0.9976 | Val Loss: 0.0872 | Val Trial AUC: 0.9450 | Val Subject AUC: 0.9596
+Epoch 020/150 | Train Loss: 0.0071 | Train AUC: 0.9982 | Val Loss: 0.0730 | Val Trial AUC: 0.9312 | Val Sub
+... [TRUNCATED] ...
+sted_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/bica_135feat_s123/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 36 (markdown)
+========================================
+# All tier 5 - seed 123
+
+========================================
+CELL 37 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s123/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s123/xgboost_test_predictions.csv \
+    --tier4-oof results/cefam_s123/cefam_oof_subject_preds.csv \
+    --tier4-test results/cefam_s123/cefam_test_predictions.csv \
+    --output-dir results/tier5_cefam_s123/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:57:07.656295: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:57:07.723127: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.002, 0.999]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8667  ACC: 0.7625  Brier: 0.1825  BSS: 0.2699  ECE: 0.1805
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9264  ACC: 0.8562  Brier: 0.1151  BSS: 0.5396  ECE: 0.0923
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.3412  w_bica=0.6588  OOF AUC=0.9375
+[LogisticReg] CV AUC: 0.9356 ± 0.0074
+[LogisticReg] Coefficients: β_tab=1.8076  β_bica=3.1189  bias=-2.4378
+
+[Tier5] Selected: Weighted Average (AUC 0.9375 > L
+... [TRUNCATED] ...
+cs ---
+  Auc            : 0.9375
+  Accuracy       : 0.8688
+  F1             : 0.8679
+  Precision      : 0.8734
+  Recall         : 0.8625
+  Specificity    : 0.8750
+  Brier_score    : 0.1000
+  Brier_skill_score: 0.6001
+  Ece            : 0.0611
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=1.0603  NLL=0.3293
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9375
+  Accuracy       : 0.8688
+  F1             : 0.8679
+  Precision      : 0.8734
+  Recall         : 0.8625
+  Specificity    : 0.8750
+  Brier_score    : 0.1005
+  Brier_skill_score: 0.5981
+  Ece            : 0.0644
+
+[Tier5] Saved ROC comparison to results/tier5_cefam_s123/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_cefam_s123/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_cefam_s123/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_cefam_s123/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_cefam_s123/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_cefam_s123/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8667
+ Tier 4  AUC: 0.9264
+ Tier 5  AUC: 0.9375  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_cefam_s123/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 38 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s123/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s123/xgboost_test_predictions.csv \
+    --tier4-oof results/bica_s123/bica_subject_val_predictions.csv \
+    --tier4-test results/bica_s123/bica_test_predictions.csv \
+    --output-dir results/tier5_bica_s123/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:58:34.298177: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:58:34.364421: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.000, 0.995]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8667  ACC: 0.7625  Brier: 0.1825  BSS: 0.2699  ECE: 0.1805
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9572  ACC: 0.8875  Brier: 0.0858  BSS: 0.6568  ECE: 0.0421
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.0423  w_bica=0.9577  OOF AUC=0.9591
+[LogisticReg] CV AUC: 0.9494 ± 0.0118
+[LogisticReg] Coefficients: β_tab=1.5378  β_bica=3.6452  bias=-2.6836
+
+[Tier5] Selected: Weighted Average (AUC 0.9591 > L
+... [TRUNCATED] ...
+5 Metrics ---
+  Auc            : 0.9591
+  Accuracy       : 0.8875
+  F1             : 0.8916
+  Precision      : 0.8605
+  Recall         : 0.9250
+  Specificity    : 0.8500
+  Brier_score    : 0.0837
+  Brier_skill_score: 0.6654
+  Ece            : 0.0536
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=1.0111  NLL=0.2712
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9591
+  Accuracy       : 0.8875
+  F1             : 0.8916
+  Precision      : 0.8605
+  Recall         : 0.9250
+  Specificity    : 0.8500
+  Brier_score    : 0.0836
+  Brier_skill_score: 0.6657
+  Ece            : 0.0527
+
+[Tier5] Saved ROC comparison to results/tier5_bica_s123/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_bica_s123/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_bica_s123/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_bica_s123/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_bica_s123/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_bica_s123/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8667
+ Tier 4  AUC: 0.9572
+ Tier 5  AUC: 0.9591  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_bica_s123/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 39 (markdown)
+========================================
+# Seed 456
+
+========================================
+CELL 40 (markdown)
+========================================
+# Tier 3 - Seed 456: XGBoost, LightGBM, CatBoost
+
+========================================
+CELL 41 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model xgboost --seed 456
+!python -m src.tier3_tabular.tabular_models --model catboost --seed 456
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:42:46] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 1 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:42:47] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label_encoder" } are not used.
+
+  bst.update(dtrain, iteration=i, fobj=obj)
+
+--- Fold 2 ---
+/usr/local/lib/python3.12/dist-packages/xgboost/training.py:200: UserWarning: [07:42:47] WARNING: /__w/xgboost/xgboost/src/learner.cc:782: 
+Parameters: { "use_label
+... [TRUNCATED] ...
+ry-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.7988
+  Stimulus-Level Auc: 0.8971
+  Stimulus-Level F1: 0.7928
+  Stimulus-Level Precision: 0.8139
+  Stimulus-Level Recall: 0.7728
+  Stimulus-Level Specificity: 0.8247
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.8000
+  Subject-Level Auc: 0.8981
+  Subject-Level F1: 0.7949
+  Subject-Level Precision: 0.8158
+  Subject-Level Recall: 0.7750
+  Subject-Level Specificity: 0.8250
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines_s456/catboost_oof_subject_preds.csv
+Saved results summary to results/baselines_s456/catboost_results_summary.json
+Saved test predictions to results/baselines_s456/catboost_test_predictions.csv
+------------------------------
+
+========================================
+CELL 42 (code)
+========================================
+!python -m src.tier3_tabular.tabular_models --model lightgbm --seed 456
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Loading stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Merged 120 delta/category-mean features from data/processed/features_subject_level.csv
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier3_tabular/tabular_models.py:192: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged['Category'] = df_merged['Stimulus_ID'].map(category_map)
+Loading CV splits from EMS/Train_Valid.xlsx...
+Number of features (stimulus + delta): 135
+Training on 160 subjects (15907 trials)...
+
+--- Fold 0 ---
+
+--- Fold 1 ---
+
+--- Fold 2 ---
+
+--- Fold 3 ---
+
+--- Evaluation on Stimulus Level ---
+  Stimulus-Level Accuracy: 0.7803
+  Stimulus-Level Auc: 0.8453
+  Stimulus-Level F1: 0.7835
+  Stimulus-Level Precision: 0.7694
+  Stimulus-Level Recall: 0.7980
+  Stimulus-Level Specificity: 0.7628
+
+--- Evaluation on Subject Level (Uniform Weights) ---
+  Subject-Level Accuracy: 0.7812
+  Subject-Level Auc: 0.8459
+  Subject-Level F1: 0.7853
+  Subject-Level Precision: 0.7711
+  Subject-Level Recall: 0.8000
+  Subject-Level Specificity: 0.7625
+
+[Tier5 OOF] Saved OOF subject predictions to results/baselines_s456/lightgbm_oof_subject_preds.csv
+Saved results summary to results/baselines_s456/lightgbm_results_summary.json
+Saved test predictions to results/baselines_s456/lightgbm_test_predictions.csv
+------------------------------
+
+========================================
+CELL 43 (markdown)
+========================================
+# All tier 4 - seed 456
+
+========================================
+CELL 44 (code)
+========================================
+!python scripts/train_tier4.py --seed 456 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 1579, in load
+    return _load(
+           ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2190, in _load
+    result = unpickler.load()
+             ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2154, in persistent_load
+    typed_storage = load_tensor(
+                    ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2097, in load_tensor
+    zip_file.get_storage_from_record(name, nbytes, torch.UntypedStorage)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/scripts/train_tier4.py", line 653, in <module>
+^C
+------------------------------
+
+========================================
+CELL 45 (code)
+========================================
+!python scripts/train_tier4.py --config configs/stgnn_config.yaml --seed 456 --batch-size 128
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loaded clean fixations. Global pupil mean: 1218.2891, std: 614.1672
+Loading spatiotemporal graphs from data/processed/graphs/graphs.pt...
+Total train/valid graphs: 15598
+Total test graphs: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train graphs: 11686, Val graphs: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+Ep 001/200 | TrLoss=0.0739 TrAUC=0.7865 | VaLoss=0.0740 VaTrialAUC=0.7802 VaSubjAUC=0.8384
+Ep 005/200 | TrLoss=0.0444 TrAUC=0.8970 | VaLoss=0.0822 VaTrialAUC=0.7840 VaSubjAUC=0.8157
+Ep 010/200 | TrLoss=0.0405 TrAUC=0.9158 | VaLoss=0.0833 VaTrialAUC=0.8101 VaSubjAUC=0.8586
+Ep 015/200 | TrLoss=0.0361 TrAUC=0.9329 | VaLoss=0.0844 VaTrialAUC=0.8286 VaSubjAUC=0.8737
+Ep 020/200 | TrLoss=0.0344 TrAUC=0.9396 | VaLoss=0.0969 VaTrialAUC=0.8236 VaSubjAUC=0.8763
+Ep 025/200 | TrLoss=0.0398 TrAUC=0.9176 | VaLoss=0.0800 VaTrialAUC=0.8203 VaSubjAUC=0.8737
+Ep 030/200 | TrLoss=0.0366 TrAUC=0.9304 | VaLoss=0.0925 VaTrialAUC=0.8248 VaSubjAUC=0.8763
+Ep 035/200 | TrLoss=0.0344 TrAUC=0.9390 | VaLoss=0.0934 VaTrialAUC=0.8152 VaSubjAUC=0.8611
+Ep 040/200 | TrLoss=0.0324 TrAUC=0.9447 | VaLoss=0.1086 VaTrialAUC=0.8245 VaSubjAUC=0.8813
+Ep 045/200 | TrLoss=
+... [TRUNCATED] ...
+lts/stgnn_s456/stgnn_results_summary.json
+
+--- Running Test Set Inference on 1118 graphs ---
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/tier4_advanced/gnn_stream.py:58: UserWarning: 'nn.glob.GlobalAttention' is deprecated, use 'nn.aggr.AttentionalAggregation' instead
+  self.pool = GlobalAttention(gate_nn)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/stgnn_s456/stgnn_test_predictions.csv
+------------------------------
+
+========================================
+CELL 46 (code)
+========================================
+# Old with 15 feature, new version with 135 feature ran below
+#!PYTHONPATH=. python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" \
+#    --config configs/bica_config.yaml --seed 456
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Train trials: 11686, Val trials: 3912
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Epoch 001/150 | Train Loss: 0.0604 | Train AUC: 0.8969 | Val Loss: 0.0737 | Val Trial AUC: 0.8146 | Val Subject AUC: 0.8460
+Epoch 005/150 | Train Loss: 0.0431 | Train AUC: 0.9294 | Val Loss: 0.0647 | Val Trial AUC: 0.8425 | Val Subject AUC: 0.8813
+Epoch 010/150 | Train Loss: 0.0409 | Train AUC: 0.9356 | Val Loss: 0.0883 | Val Trial AUC: 0.8389 | Val Subject AUC: 0.8763
+Epoch 015/150 | Train Loss: 0.0407 | Train AUC: 0.9378 | Val Loss: 0.0754 | Val Trial AUC: 0.8404 | Val Subject AUC: 0.8838
+Epoch 020/150 | Train Loss: 0.0406 | Train AUC: 0.9365 | Val Loss: 0.0665 | Val Trial AUC: 0.8440 | Val Subject AUC: 0.8939
+Early stopping at epoch 21 (Best Val Subject AUC: 0.9217)
+Fold 0 complete. Best Validation Subject AUC: 0.9217
+
+==================== Training Fold 1 ====================
+Train trials: 11708, Val trials: 3890
+/content/drive/MyDrive/Eye 
+... [TRUNCATED] ...
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/MyDrive/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to Bidirectional Cross-Attention Hybrid Stream/results_s456/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 47 (code)
+========================================
+!python "Bidirectional Cross-Attention Hybrid Stream/scripts/train_bica.py" --seed 456 --batch-size 128 --output_dir results/bica_135feat_s456
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:Using device: cuda
+Loading preprocessed fixations from data/processed/clean_fixations.parquet...
+Loading flat stimulus-level features from data/processed/features_stimulus_level.csv...
+  [Delta] Loaded 120 delta features from data/processed/features_subject_level.csv
+Handcrafted feature dimension: 135 (15 stimulus + 120 delta)
+Total train/valid trials: 15598
+Total test trials: 1118
+
+==================== Training Fold 0 ====================
+Fold 0 training pupil stats: Mean=1217.3096, Std=610.6889
+Train trials: 11686, Val trials: 3912
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+Found existing checkpoint at results/bica_135feat_s456/checkpoints/bica_fold_0_best.pt. Resuming and evaluating...
+Loaded checkpoint - Val Loss: 0.0447 | Val Trial AUC: 0.9776 | Val Subject AUC: 0.9823
+
+==================== Training Fold 1 ====================
+Fold 1 training pupil stats: Mean=1256.3683, Std=633.2075
+Train trials: 11708, Val trials: 3890
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_laye
+... [TRUNCATED] ...
+sted_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 0: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 1: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 2: 48 test subjects processed.
+/content/drive/.shortcut-targets-by-id/1fhPJhVsKHZIH9TMR4_HSLuhHEl0bG-Vz/Eye Movement-Based Schizophrenia Recognition/src/models/bica/model.py:52: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+  Fold 3: 48 test subjects processed.
+[Test] Saved test set predictions to results/bica_135feat_s456/bica_test_predictions.csv
+------------------------------
+
+========================================
+CELL 48 (markdown)
+========================================
+# All tier 5 - seed 456
+
+========================================
+CELL 49 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s456/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s456/xgboost_test_predictions.csv \
+    --tier4-oof results/cefam_s456/cefam_oof_subject_preds.csv \
+    --tier4-test results/cefam_s456/cefam_test_predictions.csv \
+    --output-dir results/tier5_cefam_s456/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:57:47.593727: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:57:47.659711: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.004, 0.993]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8778  ACC: 0.7875  Brier: 0.1670  BSS: 0.3322  ECE: 0.1556
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9241  ACC: 0.8500  Brier: 0.1080  BSS: 0.5681  ECE: 0.0515
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.2523  w_bica=0.7477  OOF AUC=0.9491
+[LogisticReg] CV AUC: 0.9425 ± 0.0219
+[LogisticReg] Coefficients: β_tab=1.9637  β_bica=3.4082  bias=-2.5450
+
+[Tier5] Selected: Weighted Average (AUC 0.9491 > L
+... [TRUNCATED] ...
+cs ---
+  Auc            : 0.9491
+  Accuracy       : 0.8500
+  F1             : 0.8442
+  Precision      : 0.8784
+  Recall         : 0.8125
+  Specificity    : 0.8875
+  Brier_score    : 0.0954
+  Brier_skill_score: 0.6183
+  Ece            : 0.0848
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=0.7648  NLL=0.3107
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9491
+  Accuracy       : 0.8500
+  F1             : 0.8442
+  Precision      : 0.8784
+  Recall         : 0.8125
+  Specificity    : 0.8875
+  Brier_score    : 0.0935
+  Brier_skill_score: 0.6258
+  Ece            : 0.0953
+
+[Tier5] Saved ROC comparison to results/tier5_cefam_s456/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_cefam_s456/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_cefam_s456/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_cefam_s456/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_cefam_s456/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_cefam_s456/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8778
+ Tier 4  AUC: 0.9241
+ Tier 5  AUC: 0.9491  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_cefam_s456/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 50 (code)
+========================================
+!python scripts/run_tier5.py \
+    --tier3-oof results/baselines_s456/xgboost_oof_subject_preds.csv \
+    --tier3-test results/baselines_s456/xgboost_test_predictions.csv \
+    --tier4-oof results/bica_s456/bica_subject_val_predictions.csv \
+    --tier4-test results/bica_s456/bica_test_predictions.csv \
+    --output-dir results/tier5_bica_s456/ \
+    --plot --calibrate
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:2026-06-29 10:59:01.516816: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-06-29 10:59:01.581571: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+=================================================================
+ TIER 5 META-LEARNER
+=================================================================
+[Tier5 OOF] Loaded 160 subjects | P_tab range [0.000, 1.000] | P_bica range [0.000, 0.995]
+[Test] Test labels are unknown (Label=-1) — skipping test evaluation.
+
+--- Baseline: Tier 3 alone (XGBoost/LGB/CatBoost) ---
+  AUC: 0.8778  ACC: 0.7875  Brier: 0.1670  BSS: 0.3322  ECE: 0.1556
+
+--- Baseline: Tier 4 alone (BiCA-HS / CEFAM) ---
+  AUC: 0.9494  ACC: 0.8562  Brier: 0.0989  BSS: 0.6043  ECE: 0.0792
+
+=== Tier 5 Meta-Learner Training ===
+Input shape: (160, 2)  |  Class balance: 80/80 (SZ/HC)
+[WeightedAvg] Optimal  w_tab=0.2831  w_bica=0.7169  OOF AUC=0.9578
+[LogisticReg] CV AUC: 0.9537 ± 0.0129
+[LogisticReg] Coefficients: β_tab=1.8832  β_bica=3.4280  bias=-2.3915
+
+[Tier5] Selected: Weighted Average (AUC 0.9578 > L
+... [TRUNCATED] ...
+5 Metrics ---
+  Auc            : 0.9578
+  Accuracy       : 0.8875
+  F1             : 0.8831
+  Precision      : 0.9189
+  Recall         : 0.8500
+  Specificity    : 0.9250
+  Brier_score    : 0.0865
+  Brier_skill_score: 0.6541
+  Ece            : 0.1008
+
+--- Calibration (Temperature Scaling) ---
+[TemperatureScaler] Optimal T=0.9126  NLL=0.2822
+
+--- Calibrated Tier 5 Metrics ---
+  Auc            : 0.9578
+  Accuracy       : 0.8875
+  F1             : 0.8831
+  Precision      : 0.9189
+  Recall         : 0.8500
+  Specificity    : 0.9250
+  Brier_score    : 0.0860
+  Brier_skill_score: 0.6561
+  Ece            : 0.0808
+
+[Tier5] Saved ROC comparison to results/tier5_bica_s456/figures/tier5_roc_comparison.png
+[Calibration] Saved reliability diagram to results/tier5_bica_s456/figures/tier5_reliability_diagram.png
+[DCA] Saved Decision Curve Analysis to results/tier5_bica_s456/figures/tier5_dca.png
+[Embedding] Saved Tier5 decision space to results/tier5_bica_s456/figures/tier5_decision_space.png
+
+[Tier5] Saved results summary to results/tier5_bica_s456/tier5_results_summary.json
+[Tier5] Saved OOF subject predictions to results/tier5_bica_s456/tier5_oof_subject_preds.csv
+
+=================================================================
+ Tier 3  AUC: 0.8778
+ Tier 4  AUC: 0.9494
+ Tier 5  AUC: 0.9578  (↑ vs best single)
+ Strategy: weighted_average
+=================================================================
+[Tier5] Saved meta-learner summary to results/tier5_bica_s456/tier5_meta_learner.json
+------------------------------
+
+========================================
+CELL 51 (markdown)
+========================================
+# Final analysis
+
+========================================
+CELL 52 (code)
+========================================
+!python scripts/aggregate_multiseed.py
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:==================================================================================================
+Model                                   AUC              ACC               F1             Sens             Spec
+==================================================================================================
+XGBoost                       0.8716±0.0046    0.7771±0.0106    0.7765±0.0120    0.7750±0.0204    0.7792±0.0156
+CatBoost                      0.8990±0.0012    0.8104±0.0078    0.8052±0.0076    0.7833±0.0059    0.8375±0.0102
+ST-GNN                        0.9331±0.0086    0.7896±0.0029    0.7506±0.0038    0.6333±0.0059    0.9458±0.0059
+GNN-CEFAM                     0.9208±0.0064    0.8458±0.0106    0.8465±0.0094    0.8500±0.0102    0.8417±0.0212
+BiCA-HS                       0.9549±0.0039    0.8729±0.0128    0.8726±0.0173    0.8750±0.0468    0.8708±0.0212
+Tier5 (Ensemble+CEFAM)        0.9387±0.0080    0.8625±0.0088    0.8589±0.0105    0.8375±0.0204    0.8875±0.0102
+Tier5 (Ensemble+BiCA-HS)      0.9590±0.0009    0.8854±0.0029    0.8856±0.0043    0.8875±0.0306    0.8833±0.0312
+==================================================================================================
+SOTA (MSNet 2025)                    0.8854           0.8125
+==================================================================================================
+
+--- Per-seed AUC ---
+  XGBoost                   : s42=0.8702, s123=0.8667, s456=0.8778
+  CatBoost                  : s42=0.8981, s123=0.9006, s456=0.8981
+  ST-GNN                    : s42=0.9378, s123=0.9211, s456=0.9405
+  GNN-CEFAM                 : s42=0.9119, s123=0.9264, s456=0.9241
+  BiCA-HS                   : s42=0.9581, s123=0.9572, s456=0.9494
+  Tier5 (Ensemble+CEFAM)    : s42=0.9295, s123=0.9375, s456=0.9491
+  Tier5 (Ensemble+BiCA-HS)  : s42=0.9600, s123=0.9591, s456=0.9578
+------------------------------
+
+========================================
+CELL 53 (code)
+========================================
+!python scripts/bootstrap_ci_vs_sota.py
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:========================================================================
+Bootstrap 95% CI (n=10,000) — vs SOTA AUC = 0.8854
+========================================================================
+
+XGBoost
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.8702 | [0.8125, 0.9214] |    0.6934 | NO
+     123 | 0.8667 | [0.8081, 0.9187] |    0.7380 | NO
+     456 | 0.8778 | [0.8220, 0.9252] |    0.6016 | NO
+    POOL |        | [0.8133, 0.9225] |    0.6777 | NO
+
+CatBoost
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.8981 | [0.8462, 0.9427] |    0.2888 | NO
+     123 | 0.9006 | [0.8490, 0.9439] |    0.2604 | NO
+     456 | 0.8981 | [0.8469, 0.9423] |    0.2884 | NO
+    POOL |        | [0.8470, 0.9430] |    0.2792 | NO
+
+ST-GNN
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.9378 | [0.8972, 0.9721] |    0.0090 | YES
+     123 | 0.9211 | [0.8759, 0.9597] |    0.0585 | NO
+     456 | 0.9405 | [0.9012, 0.9728] |    0.0055 | YES
+    POOL |        | [0.8858, 0.9706] |    0.0243 | YES
+
+GNN-CEFAM
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.9119 | [0.8643, 0.9523] |    0.1197 | NO
+     123 | 0.9264 | [0.8851, 0.9612] |    0.0259 | NO
+     456 | 0.9241 | [0.8787, 0.9619] |    0.0462 | NO
+    POOL |        | [0.8737, 0.9596] |    0.0639 | NO
+
+BiCA-HS
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.9581 | [0.9286, 0.9804] |    0.0000 | YES
+     123 | 0.9572 | [0.9272, 0.9811] |    0.0000 | YES
+     456 | 0.9494 | [0.9160, 0.9751] |    0.0004 | YES
+    POOL |        | [0.9222, 0.9795] |    0.0001 | YES
+
+Tier5 (Ensemble+CEFAM)
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.9295 | [0.8857, 0.9656] |    0.0242 | YES
+     123 | 0.9375 | [0.8990, 0.9698] |    0.0053 | YES
+     456 | 0.9491 | [0.9122, 0.9781] |    0.0007 | YES
+    POOL |        | [0.8951, 0.9738] |    0.0101 | YES
+
+Tier5 (Ensemble+BiCA-HS)
+    Seed |     AUC |             95% CI |   p-value | Sig?
+  -------+---------+--------------------+-----------+------
+      42 | 0.9600 | [0.9314, 0.9822] |    0.0000 | YES
+     123 | 0.9591 | [0.9285, 0.9820] |    0.0001 | YES
+     456 | 0.9578 | [0.9267, 0.9820] |    0.0000 | YES
+    POOL |        | [0.9288, 0.9820] |    0.0000 | YES
+
+========================================================================
+Interpretation:
+  YES = 95% CI lower bound > SOTA (0.8854) => p < 0.025 (significant)
+  NO  = CI overlaps SOTA => not significant at alpha=0.05
+========================================================================
+------------------------------
+
+========================================
+CELL 54 (code)
+========================================
+!rm -rf experiments/ablation/results/ experiments/ablation/figures/
+
+!python experiments/ablation/run_ablation_analysis.py
+
+!python experiments/ablation/plot_ablation.py
+
+--- Cell Output (1 outputs) ---
+[Output 0 - stream]:======================================================================
+ABLATION STUDY - Eye Movement-Based Schizophrenia Recognition
+======================================================================
+
+Loading model predictions...
+Loaded 5 models: ['GNN+CEFAM (Full Hybrid)', 'ST-GNN (GNN Only)', 'BiCA-HS (Transformer)', 'XGBoost (Tabular Only)', 'CatBoost (Tabular Only)']
+
+======================================================================
+F1: FULL MODEL COMPARISON (Main Ablation Table)
+======================================================================
+
+--- GNN+CEFAM (Full Hybrid) ---
+  AUC-ROC:  0.9119
+  ACC @0.5: 0.8313
+  F1  @0.5: 0.8344
+  ACC @opt: 0.8500 (th=0.3517)
+  F1  @opt: 0.8571
+  Sens@opt: 0.9000
+  Spec@opt: 0.8000
+
+--- ST-GNN (GNN Only) ---
+  AUC-ROC:  0.9378
+  ACC @0.5: 0.7875
+  F1  @0.5: 0.7463
+  ACC @opt: 0.8750 (th=0.4008)
+  F1  @opt: 0.8837
+  Sens@opt: 0.9500
+  Spec@opt: 0.8000
+
+--- BiCA-HS (Transformer) ---
+  AUC-ROC:  0.9581
+  ACC @0.5: 0.8750
+  F1  @0.5: 0.8765
+  ACC @opt: 0.8875 (th=0.5579)
+  F1  @opt: 0.8875
+  Sens@opt: 0.8875
+  Spec@opt: 0.8875
+
+--- XGBoost (Tabular Only) ---
+  AUC-ROC:  0.8702
+  ACC @0.5: 0.7812
+  F1  @0.5: 0.7853
+  ACC @opt: 0.8063 (th=0.5953)
+  F1  @opt: 0.8050
+  Sens@opt: 0.8000
+  Spec@opt: 0.8125
+
+--- CatBoost (Tabular Only) ---
+  AUC-ROC:  0.8981
+  ACC @0.5: 0.8125
+  F1  @0.5: 0.8077
+  ACC @opt: 0.8313 (th=0.0866)
+  F1  @opt: 0.8402
+  Sens@opt: 0.8875
+  Spec@opt: 0.7750
+
+=================================================
+... [TRUNCATED] ...
+======================================
+  GNN+CEFAM (Full Hybrid): AUC = 0.9119  (40 points)
+  ST-GNN (GNN Only): AUC = 0.9378  (34 points)
+  BiCA-HS (Transformer): AUC = 0.9581  (28 points)
+  XGBoost (Tabular Only): AUC = 0.8702  (53 points)
+  CatBoost (Tabular Only): AUC = 0.8981  (45 points)
+
+======================================================================
+GENERATING COMPREHENSIVE ABLATION SUMMARY
+======================================================================
+
+  Summary saved to experiments/ablation/results/ablation_summary.json
+
+======================================================================
+ABLATION STUDY COMPLETE
+======================================================================
+
+All results saved to: experiments/ablation/results/
+
+Key Findings:
+  * Best model: BiCA-HS (Transformer) with AUC=0.9581, ACC=0.8875
+  * CEFAM Fusion + Handcrafted Stream: dAUC=-0.0259, dACC=-0.0250
+  * GNN Stream (Graph Topology): dAUC=+0.0417, dACC=+0.0437
+  * Transformer Encoder (vs GAT): dAUC=+0.0463, dACC=+0.0375
+  * Full BiCA-HS vs GNN Standalone: dAUC=+0.0203, dACC=+0.0125
+  * Most stable model: BiCA-HS (Transformer) (CV_AUC=0.0241)
+==================================================
+GENERATING ABLATION FIGURES
+==================================================
+  [OK] F1_model_comparison.png
+  [OK] F2_component_contribution.png
+  [OK] F3_category_analysis.png
+  [OK] F7_roc_curves.png
+  [OK] F5_fold_stability.png
+
+All figures saved to: experiments/ablation/figures/
+------------------------------

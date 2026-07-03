@@ -128,12 +128,19 @@ def load_model_predictions(results_dir):
     if xgb_path:
         models["XGBoost (Tabular Only)"] = pd.read_csv(xgb_path)
 
+    # CatBoost (Tabular Baseline)
+    cat_path = _resolve(results_dir, "baselines", "catboost_subject_val_preds.csv")
+    if cat_path:
+        models["CatBoost (Tabular Only)"] = pd.read_csv(cat_path)
+
     # Load JSON summaries for per-fold data
     summaries = {}
     for name, prefix, subdir in [
         ("GNN+CEFAM (Full Hybrid)", "cefam", "cefam"),
         ("ST-GNN (GNN Only)", "stgnn", "stgnn"),
         ("BiCA-HS (Transformer)", "bica", "bica"),
+        ("XGBoost (Tabular Only)", "xgboost", "baselines"),
+        ("CatBoost (Tabular Only)", "catboost", "baselines"),
     ]:
         json_path = _resolve(results_dir, subdir, f"{prefix}_results_summary.json")
         if json_path:
@@ -226,7 +233,7 @@ def ablation_f2_component_contribution(models, output_dir):
             "comparison": "Full Hybrid vs GNN Only",
             "delta_auc": delta_auc,
             "delta_acc": delta_acc,
-            "interpretation": "Value of adding handcrafted features + bidirectional cross-attention"
+            "interpretation": "Fusion overhead: CEFAM cross-attention + handcrafted stream vs. pure GNN"
         })
         print(f"\n  CEFAM + Handcrafted Stream:")
         print(f"    dAUC = {delta_auc:+.4f}  |  dACC = {delta_acc:+.4f}")
